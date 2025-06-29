@@ -1,0 +1,12 @@
+{
+    "name": "ranzg/rocketlauncher-tests",
+    "authors": [
+        {
+            "name": "Ram Grande",
+            "email": "ranzg.grande@gmail.com"
+        }
+    ],
+    "require": {
+        "monolog/monolog": "^3.9"
+    }
+}
