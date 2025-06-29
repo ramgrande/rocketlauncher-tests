@@ -52,7 +52,9 @@ if ($countOnly) {
 }
 
 // ─── 4) Spawn the background worker ───
-$jobId = bin2hex(random_bytes(8));
+// Use OpenSSL fallback instead of random_bytes()
+$jobId = bin2hex(openssl_random_pseudo_bytes(8));
+
 $cmd = sprintf(
     'php %s/cli_upload.php %s > /dev/null 2>&1 &',
     __DIR__,
