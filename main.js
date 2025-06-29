@@ -1,10 +1,38 @@
-window.addEventListener('DOMContentLoaded', function() {
+/*  Facebook Rocket‑Launcher – front‑end logic
+    ===============================================================
+    © 2025 – MIT‑licensed sample code.  No warranty; use at your own
+    discretion and be sure to review OAuth / Graph API limits, etc.
+*/
 
-  // ─── Helper functions for rendering the upload log ───
-  let rowMap = {};   // filename → <tr> element
-  let doneCount = 0; // how many uploads have finished
+window.addEventListener('DOMContentLoaded', function () {
 
-  function makeRow(filename, status) {
+  /*━━━━━━━━━━━━━━━━━━ 1. Tiny helpers ━━━━━━━━━━━━━━━━━━*/
+  const $ = sel => document.querySelector(sel);
+
+  // Show / hide secret inputs (Google key & FB token)
+  $('#toggleToken')    ?.addEventListener('click', () => toggleSecret('#accessToken',  '#eyeIcon'));
+  $('#toggleGoogleKey')?.addEventListener('click', () => toggleSecret('#googleApiKey', '#googleEyeIcon'));
+
+  function toggleSecret(inputSel, iconSel) {
+    const inp = $(inputSel);
+    const ico = $(iconSel);
+    if (!inp || !ico) return;
+    if (inp.type === 'password') { inp.type = 'text';  ico.textContent = '🙈'; }
+    else                         { inp.type = 'password'; ico.textContent = '👁️'; }
+  }
+
+  /** Read a `fetch` Response safely as JSON or throw the raw text. */
+  async function safeJson(resp) {
+    const raw = await resp.text();
+    try { return JSON.parse(raw); }
+    catch { throw new Error(raw || resp.statusText); }
+  }
+
+  /*━━━━━━━━━━━━━━━━━━ 2. Upload‑log helpers ━━━━━━━━━━━━*/
+  const rowMap   = Object.create(null);   // filename → <tr>
+  let doneCount  = 0;
+
+  function makeRow(filename, status = 'Queued') {
     const tr = document.createElement('tr');
     tr.innerHTML = `
       <td>${filename}</td>
@@ -13,19 +41,17 @@ window.addEventListener('DOMContentLoaded', function() {
         <div class="bar"><div class="fill" style="width:0"></div></div>
         <span class="txt">${status}</span>
       </td>`;
-    document.querySelector('.log-table tbody').appendChild(tr);
+    document.querySelector('.log-table tbody')?.appendChild(tr);
     rowMap[filename] = tr;
   }
 
-  function updateBar(tr, pct, statusText) {
-    const fill = tr.querySelector('.fill');
-    const txt  = tr.querySelector('.txt');
-    fill.style.width = pct + '%';
-    txt.textContent = statusText;
+  function updateBar(tr, pct, txt) {
+    if (!tr) return;
+    tr.querySelector('.fill').style.width = pct + '%';
+    tr.querySelector('.txt').textContent  = txt;
   }
 
-
-  // ─── Header/placeholder logic ───
+  /*━━━━━━━━━━━━━━━━━━ 3. Campaign template data ━━━━━━━*/
   const headers = [
     "Campaign ID","Campaign Name","Campaign Status","Campaign Objective","Buying Type",
     "Campaign Start Time","New Objective","Buy With Prime Type","Is Budget Scheduling Enabled For Campaign",
@@ -41,6 +67,7 @@ window.addEventListener('DOMContentLoaded', function() {
     "Video File Name","Instagram Account ID","Call to Action","Additional Custom Tracking Specs",
     "Video Retargeting","Permalink","Use Page as Actor","Degrees of Freedom Type","Text Transformations"
   ];
+
   const placeholderRow = [
     null,"Campaign #1","PAUSED","Outcome Leads","AUCTION","06/17/2025 1:09:54 pm","Yes","NONE",
     "No","[]","NONE",null,"ACTIVE",0,"Adset #1",
@@ -54,245 +81,232 @@ window.addEventListener('DOMContentLoaded', function() {
     null,null,"untitled","Video Page Post Ad","", "",null,"LEARN_MORE","[]","No",null,"No","USER_ENROLLED_NON_DCO","TEXT_LIQUIDITY"
   ];
 
+  /* Column indices we’ll re‑use a lot */
   const idxCampaignName = headers.indexOf("Campaign Name");
+  const idxAdSetName    = headers.indexOf("Ad Set Name");
+  const idxAdName       = headers.indexOf("Ad Name");
   const idxVideoID      = headers.indexOf("Video ID");
   const idxVideoFile    = headers.indexOf("Video File Name");
-  const idxAdName       = headers.indexOf("Ad Name");
-  const idxAdSetName    = headers.indexOf("Ad Set Name");
   const idxBody         = headers.indexOf("Body");
   const idxTitle        = headers.indexOf("Title");
   const idxLink         = headers.indexOf("Link");
 
-  function stripExt(name) {
-    return name.replace(/\.[^.]+$/, '');
-  }
+  const stripExt = name => name.replace(/\.[^.]+$/, '');
 
-  // Prefill form fields
-  document.getElementById('bodyField').value         = placeholderRow[idxBody] || "";
-  document.getElementById('titleField').value        = placeholderRow[idxTitle] || "";
-  document.getElementById('linkField').value         = placeholderRow[idxLink] || "";
-  document.getElementById('campaignNameField').value = placeholderRow[idxCampaignName] || "";
+  /* Prefill textboxes so the user sees something */
+  $('#bodyField').value         = placeholderRow[idxBody]  ?? '';
+  $('#titleField').value        = placeholderRow[idxTitle] ?? '';
+  $('#linkField').value         = placeholderRow[idxLink]  ?? '';
+  $('#campaignNameField').value = placeholderRow[idxCampaignName] ?? '';
 
-  // ─── Structure picker ───
-  function renderStructurePicker(videoCount) {
-    const el = document.getElementById('structurePicker');
-    el.style.display = "";
+  /*━━━━━━━━━━━━━━━━━━ 4. Campaign structure picker ━━━━*/
+  function renderStructurePicker(videoCount = 10) {
+    const el = $('#structurePicker');
     el.innerHTML = `
       <div class="structure-picker">
         <div class="structure-title">Campaign Structure</div>
         <div class="structure-choice">
           <input type="radio" name="structure" id="oneAdset" value="one-adset" checked>
-          <label for="oneAdset">1 Ad Set, Multiple Ads (All videos in <b>Adset #1</b>)</label>
+          <label for="oneAdset">1 Ad Set, multiple ads (all videos under <b>Adset #1</b>)</label>
         </div>
         <div class="structure-choice">
           <input type="radio" name="structure" id="abo1to1" value="abo-1to1">
-          <label for="abo1to1">1 Ad Set per 1 Ad (Advanced ABO 1:1)</label>
+          <label for="abo1to1">1 Ad Set per 1 Ad (ABO 1:1)</label>
         </div>
         <div class="structure-choice">
           <input type="radio" name="structure" id="customABO" value="custom">
           <label for="customABO">Custom:
-            <input type="number" min="1" max="${videoCount||10}"
-                   id="adsetNumInput" class="adset-num-input" value="2">
-            ad sets (max ${videoCount||10})
+            <input type="number" id="adsetNumInput"
+                   class="adset-num-input" min="1" max="${videoCount}" value="2">
+            ad sets (max ${videoCount})
           </label>
         </div>
       </div>`;
-    document.querySelectorAll('input[name="structure"]').forEach(radio => {
-      radio.addEventListener('change', function() {
-        document.getElementById('adsetNumInput').disabled = (this.value !== "custom");
-      });
+    const numInput = $('#adsetNumInput');
+    numInput.disabled = true;
+    document.querySelectorAll('input[name="structure"]').forEach(r =>
+      r.addEventListener('change', () => { numInput.disabled = r.value !== 'custom'; })
+    );
+    numInput.addEventListener('input', () => {
+      const v = Math.max(1, Math.min(videoCount, parseInt(numInput.value || '1', 10)));
+      numInput.value = v;
     });
-    document.getElementById('adsetNumInput').addEventListener('input', function() {
-      let val = Math.max(1, Math.min(videoCount||10, parseInt(this.value) || 1));
-      this.value = val;
-    });
-    document.getElementById('adsetNumInput').disabled = true;
   }
-  renderStructurePicker(10);
+  renderStructurePicker();
 
-  // ─── Preview population ───
-  let globalData = [];
-  let rows = [ placeholderRow.slice() ];
+  /*━━━━━━━━━━━━━━━━━━ 5. XLSX preview pane ━━━━━━━━━━━*/
+  let rows        = [ placeholderRow.slice() ];
+  let globalData  = [];
+
   function populatePreview() {
-    const cont = document.getElementById('previewContainer');
+    const cont = $('#previewContainer');
     cont.innerHTML = '';
-    const c = document.createElement('div');
-    c.className = 'form-container';
-
-    [idxVideoID, idxVideoFile].forEach(i => {
-      const lab = document.createElement('label');
-      lab.textContent = headers[i];
-      const inp = document.createElement('input');
-      inp.readOnly = true;
-      inp.value = rows[0][i] || '';
-      c.appendChild(lab);
-      c.appendChild(inp);
+    const wrap = document.createElement('div');
+    wrap.className = 'form-container';
+    headers.forEach((h, i) => {
+      const lab = document.createElement('label'); lab.textContent = h;
+      const inp = document.createElement('input'); inp.readOnly = true;
+      inp.value = rows[0][i] ?? '';
+      wrap.appendChild(lab);  wrap.appendChild(inp);
     });
-
-    headers.forEach((h,i) => {
-      if (i===idxVideoID||i===idxVideoFile) return;
-      const lab = document.createElement('label');
-      lab.textContent = h;
-      const inp = document.createElement('input');
-      inp.readOnly = true;
-      inp.value = rows[0][i] || '';
-      c.appendChild(lab);
-      c.appendChild(inp);
-    });
-
-    cont.appendChild(c);
+    cont.appendChild(wrap);
   }
   populatePreview();
 
-  // ─── Load videos button ───
-  document.getElementById('loadBtn').addEventListener('click', async () => {
+  /*━━━━━━━━━━━━━━━━━━ 6. “Load All Uploaded” button ━━*/
+  $('#loadBtn').addEventListener('click', async () => {
     try {
-      const r = await fetch('latest_fb_ids.json?t='+Date.now());
+      const r = await fetch('latest_fb_ids.json?ts=' + Date.now());
       if (!r.ok) throw new Error('latest_fb_ids.json not found');
       const data = await r.json();
-      if (!Array.isArray(data) || data.length<1) throw new Error('JSON must be a non-empty array');
+      if (!Array.isArray(data) || data.length === 0) throw new Error('JSON must be a non‑empty array');
+
       globalData = data;
-      renderStructurePicker(data.length);
       rows = [];
-      const campaignNameVal = document.getElementById('campaignNameField').value.trim();
-      data.forEach(({filename, video_id}) => {
-        const nr = placeholderRow.slice();
-        nr[idxVideoID]   = video_id;
-        nr[idxVideoFile] = filename;
-        if (idxCampaignName>=0 && campaignNameVal) nr[idxCampaignName] = campaignNameVal;
-        if (idxAdName>=0) nr[idxAdName] = stripExt(filename);
-        rows.push(nr);
+      const campNameInput = $('#campaignNameField').value.trim();
+
+      data.forEach(({ filename, video_id }) => {
+        const r  = placeholderRow.slice();
+        r[idxVideoID]      = video_id;
+        r[idxVideoFile]    = filename;
+        r[idxCampaignName] = campNameInput || r[idxCampaignName];
+        r[idxAdName]       = stripExt(filename);
+        rows.push(r);
       });
+
+      renderStructurePicker(data.length);
       populatePreview();
-      alert(`Loaded ${rows.length} video${rows.length>1?'s':''}!`);
-    } catch(err) {
-      alert(err.message);
-    }
+      alert(`Loaded ${rows.length} video${rows.length > 1 ? 's' : ''}.`);
+    } catch (err) { alert(err.message); }
   });
 
-  // ─── Download Excel button ───
-  document.getElementById('downloadBtn').addEventListener('click', () => {
-    if (!globalData.length) {
-      alert("Load video IDs first.");
-      return;
+  /*━━━━━━━━━━━━━━━━━━ 7. Download XLSX button ━━━━━━━━*/
+  $('#downloadBtn').addEventListener('click', () => {
+    if (!globalData.length) { alert('Load video IDs first.'); return; }
+
+    const structure = document.querySelector('input[name="structure"]:checked').value;
+    let finalRows   = [];
+
+    if (structure === 'one-adset') {
+      finalRows = rows;
+    } else if (structure === 'abo-1to1') {
+      finalRows = rows.map((r, i) => {
+        const cp = r.slice();
+        cp[idxAdSetName] = `Adset #${i + 1}`;
+        return cp;
+      });
+    } else {                       // custom n ad sets
+      const n = parseInt($('#adsetNumInput').value, 10) || 1;
+      finalRows = rows.map((r, i) => {
+        const cp = r.slice();
+        cp[idxAdSetName] = `Adset #${(i % n) + 1}`;
+        return cp;
+      });
     }
-    // your existing XLSX build/write code here
+
+    /* Build workbook & download */
+    const wb = XLSX.utils.book_new();
+    const ws = XLSX.utils.aoa_to_sheet([headers, ...finalRows]);
+    XLSX.utils.book_append_sheet(wb, ws, 'Sheet1');
+    XLSX.writeFile(wb, 'facebook_campaign.xlsx');
   });
 
-  // ─── Toggle token visibility ───
-  document.getElementById('toggleToken').addEventListener('click', () => {
-    const input = document.getElementById('accessToken');
-    const eye   = document.getElementById('eyeIcon');
-    if (input.type === "password") {
-      input.type = "text";
-      eye.textContent = "🙈";
-    } else {
-      input.type = "password";
-      eye.textContent = "👁️";
-    }
-  });
-
-  // ─── Uploader Logic + Progress UI ───
-  document.getElementById('uploadForm').addEventListener('submit', async function(e) {
+  /*━━━━━━━━━━━━━━━━━━ 8. Upload workflow ━━━━━━━━━━━━*/
+  $('#uploadForm').addEventListener('submit', async e => {
     e.preventDefault();
 
-    const folderId     = document.getElementById('folderId').value.trim();
-    const accessToken  = document.getElementById('accessToken').value.trim();
-    const accountId    = document.getElementById('accountId').value.trim();
-    const googleApiKey = document.getElementById('googleApiKey').value.trim();
-    const uploadBtn    = document.getElementById('uploadBtn');
-    const uploadLogDiv = document.getElementById('uploadLogContainer');
+    const folderId     = $('#folderId').value.trim();
+    const accessToken  = $('#accessToken').value.trim();
+    const accountId    = $('#accountId').value.trim();
+    const googleApiKey = $('#googleApiKey').value.trim();
+    const uploadBtn    = $('#uploadBtn');
+    const logDiv       = $('#uploadLogContainer');
 
     uploadBtn.disabled = true;
-    uploadLogDiv.innerHTML = '';
+    logDiv.innerHTML   = '';
 
-    // 1) Count files BEFORE uploading
+    /* 8‑A  Count files first */
     let fileCount = 0;
     try {
-      const respCount = await fetch('upload.php', {
-        method: 'POST',
+      const r  = await fetch('upload.php', {
+        method : 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          folderId, accessToken, accountId, googleApiKey, count: true
-        })
+        body   : JSON.stringify({ folderId, accessToken, accountId, googleApiKey, count: true })
       });
-      const info = await respCount.json();
-      fileCount = info.count || 0;
+      if (!r.ok) throw new Error(await r.text());
+      const js = await safeJson(r);
+      fileCount = +js.count || 0;
     } catch (err) {
-      fileCount = 0;
-    }
-
-    // 2) Build the log table skeleton
-    uploadLogDiv.innerHTML = '<b>Upload Log:</b>';
-    const table = document.createElement('table');
-    table.className = 'log-table';
-    const thead = document.createElement('thead');
-    const trh = document.createElement('tr');
-    ['Filename','Video ID','Status'].forEach(h => {
-      const th = document.createElement('th');
-      th.textContent = h;
-      trh.appendChild(th);
-    });
-    thead.appendChild(trh);
-    table.appendChild(thead);
-    const tbody = document.createElement('tbody');
-    table.appendChild(tbody);
-    uploadLogDiv.appendChild(table);
-
-    // 3) Kick off job and get jobId
-    let jobId;
-    try {
-      const respJob = await fetch('upload.php', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ folderId, accessToken, accountId, googleApiKey })
-      });
-      const j = await respJob.json();
-      jobId = j.jobId;
-    } catch (err) {
-      uploadLogDiv.textContent = 'Error starting upload: ' + err.message;
+      logDiv.textContent = 'Count failed: ' + err.message;
       uploadBtn.disabled = false;
       return;
     }
 
-    // 4) Listen to SSE for progress
-    let lastHeartbeat = Date.now();
-    function heartbeatUI() {
-      const ago = Math.round((Date.now() - lastHeartbeat)/1000);
-      uploadLogDiv.querySelector('table').insertAdjacentHTML('afterend',
-        `<div class="heartbeat">Last activity: ${ago}s ago</div>`
-      );
-    }
-    setInterval(heartbeatUI, 1000);
+    /* 8‑B  Draw table skeleton */
+    logDiv.innerHTML = '<b>Upload Log:</b>';
+    logDiv.insertAdjacentHTML('beforeend', `
+      <table class="log-table">
+        <thead><tr><th>Filename</th><th>Video ID</th><th>Status</th></tr></thead>
+        <tbody></tbody>
+      </table>`);
 
-    const es = new EventSource(`progress.php?jobId=${jobId}`);
-    es.onmessage = e => {
-      lastHeartbeat = Date.now();
-      const msg = JSON.parse(e.data);
-      if (msg.init) {
-        msg.files.forEach(name => makeRow(name, 'Queued'));
+    /* 8‑C  Kick off job */
+    let jobId;
+    try {
+      const r = await fetch('upload.php', {
+        method : 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body   : JSON.stringify({ folderId, accessToken, accountId, googleApiKey })
+      });
+      if (!r.ok) throw new Error(await r.text());
+      const js = await safeJson(r);
+      jobId = js.jobId;
+    } catch (err) {
+      logDiv.textContent = 'Could not start upload: ' + err.message;
+      uploadBtn.disabled = false;
+      return;
+    }
+
+    /* 8‑D   Live progress via Server‑Sent Events */
+    let lastBeat = Date.now();
+    const es = new EventSource(`progress.php?jobId=${encodeURIComponent(jobId)}`);
+
+    es.onmessage = ev => {
+      lastBeat = Date.now();
+      const m = JSON.parse(ev.data);
+
+      if (m.init) {
+        m.files.forEach(fn => makeRow(fn));
         return;
       }
-      if (msg.phase==='download' || msg.phase==='upload') {
-        const pct = msg.pct;
-        const verb = (msg.phase==='download') ? 'Downloading' : 'Uploading';
-        updateBar(rowMap[msg.filename], pct, `${verb} – ${pct}%`);
+      if (m.phase === 'download' || m.phase === 'upload') {
+        const verb = m.phase === 'download' ? 'Downloading' : 'Uploading';
+        updateBar(rowMap[m.filename], m.pct, `${verb} – ${m.pct}%`);
         return;
       }
-      if (msg.phase==='done') {
-        const ok = msg.status==='success';
-        updateBar(rowMap[msg.filename], 100, ok?'Uploaded ✅':'Failed ❌');
+      if (m.phase === 'done') {
+        const ok = m.status === 'success';
+        const tr = rowMap[m.filename];
+        if (tr) tr.querySelector('.vidId').textContent = m.video_id || '';
+        updateBar(tr, 100, ok ? 'Uploaded ✅' : 'Failed ❌');
         doneCount++;
+        if (doneCount === fileCount) uploadBtn.disabled = false;
       }
     };
+
     es.onerror = () => {
       es.close();
-      uploadLogDiv.insertAdjacentHTML('beforeend',
-        '<div class="error">Connection lost.</div>'
-      );
+      logDiv.insertAdjacentHTML('beforeend', '<div class="error">Connection lost.</div>');
       uploadBtn.disabled = false;
     };
 
-  }); // end submit listener
+    /* 8‑E  Heartbeat counter so the UI feels alive */
+    setInterval(() => {
+      const ago = Math.round((Date.now() - lastBeat) / 1000);
+      logDiv.querySelector('.heartbeat')?.remove();
+      logDiv.insertAdjacentHTML('beforeend',
+        `<div class="heartbeat">Last activity ${ago}s ago</div>`);
+    }, 1000);
+  });
 
-}); // end DOMContentLoaded
+});
