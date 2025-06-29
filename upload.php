@@ -1,74 +1,78 @@
 <?php
 /**
- * upload.php – JSON API to enqueue jobs and kick off worker asynchronously
+ * upload.php – JSON API to enqueue jobs and then run worker.php
+ * asynchronously after the HTTP response via fastcgi_finish_request().
  */
 declare(strict_types=1);
 error_reporting(E_ALL);
 ini_set('display_errors', '0');
 ini_set('log_errors', '1');
-ini_set('error_log', __DIR__ . '/php-error.log');
+ini_set('error_log', __DIR__.'/php-error.log');
 
-header('Content-Type: application/json');
-
+// 1) Parse and validate JSON body
+$body = file_get_contents('php://input');
 try {
-    // 1) Parse JSON body
-    $payload = json_decode(file_get_contents('php://input'), true, 512, JSON_THROW_ON_ERROR);
-    foreach (['folderId','googleApiKey','accessToken','accountId'] as $k) {
-        if (empty($payload[$k])) {
-            throw new InvalidArgumentException("Missing field: $k");
-        }
-    }
-    $folderId     = $payload['folderId'];
-    $googleApiKey = $payload['googleApiKey'];
-    $accessToken  = $payload['accessToken'];
-    $accountId    = $payload['accountId'];
-
-    // 2) Count-only branch
-    if (!empty($payload['count'])) {
-        $n = countDriveVideos($folderId, $googleApiKey);
-        echo json_encode(['count' => $n], JSON_THROW_ON_ERROR);
-        exit;
-    }
-
-    // 3) Enqueue a new job
-    $jobId  = uniqid('job_', true);
-    $jobDir = __DIR__ . '/jobs';
-    if (!is_dir($jobDir)) mkdir($jobDir, 0777, true);
-
-    // List Drive videos & write job metadata
-    $driveFiles = listDriveVideos($folderId, $googleApiKey);
-    file_put_contents("$jobDir/$jobId.json", json_encode([
-        'created' => time(),
-        'files'   => $driveFiles,
-        'params'  => compact('folderId','googleApiKey','accessToken','accountId')
-    ], JSON_PRETTY_PRINT));
-
-    // 4) Fire off worker.php via non-blocking HTTP
-    $host = $_SERVER['HTTP_HOST'];
-    // <<-- Cast port to int here:
-    $port = intval($_SERVER['SERVER_PORT'] ?? 80);
-    $path = dirname($_SERVER['REQUEST_URI']) . "/worker.php?jobId=" . urlencode($jobId);
-
-    $fp = @fsockopen($host, $port, $errno, $errstr, 1);
-    if ($fp) {
-        $out  = "GET $path HTTP/1.1\r\n";
-        $out .= "Host: $host\r\n";
-        $out .= "Connection: Close\r\n\r\n";
-        fwrite($fp, $out);
-        fclose($fp);
-    }
-
-    // 5) Respond immediately with jobId
-    echo json_encode(['jobId' => $jobId], JSON_THROW_ON_ERROR);
-
+    $payload = json_decode($body, true, 512, JSON_THROW_ON_ERROR);
 } catch (Throwable $e) {
-    http_response_code(500);
-    echo json_encode(['error' => $e->getMessage()]);
+    http_response_code(400);
+    die(json_encode(['error'=>'Invalid JSON']));
 }
 
+foreach (['folderId','googleApiKey','accessToken','accountId'] as $k) {
+    if (empty($payload[$k])) {
+        http_response_code(400);
+        die(json_encode(['error'=>"Missing field: $k"]));
+    }
+}
+
+$folderId     = $payload['folderId'];
+$googleApiKey = $payload['googleApiKey'];
+$accessToken  = $payload['accessToken'];
+$accountId    = $payload['accountId'];
+
+// 2) Handle the COUNT-only branch
+if (!empty($payload['count'])) {
+    $n = countDriveVideos($folderId, $googleApiKey);
+    header('Content-Type: application/json');
+    echo json_encode(['count'=>$n]);
+    exit;
+}
+
+// 3) Enqueue a new job
+$jobId  = uniqid('job_', true);
+$jobDir = __DIR__ . '/jobs';
+if (!is_dir($jobDir)) mkdir($jobDir, 0777, true);
+
+// List the files from Drive
+$driveFiles = listDriveVideos($folderId, $googleApiKey);
+// Write the job meta-file
+file_put_contents("$jobDir/$jobId.json", json_encode([
+    'created' => time(),
+    'files'   => $driveFiles,
+    'params'  => compact('folderId','googleApiKey','accessToken','accountId'),
+], JSON_PRETTY_PRINT));
+
+// 4) Return the jobId immediately
+header('Content-Type: application/json');
+echo json_encode(['jobId'=>$jobId]);
+
+// 5) Detach and run the worker
+if (function_exists('fastcgi_finish_request')) {
+    // flush all response data to the client
+    fastcgi_finish_request();
+
+    // now safely run the long‐running worker
+    $_GET['jobId'] = $jobId;           // so worker.php sees the jobId
+    require __DIR__ . '/worker.php';   // worker writes to jobs/*.progress in the background
+    // after worker ends, PHP process exits naturally
+}
+
+exit;
 
 
-/** Helpers for Drive listing **/
+
+
+/* ─────────── Helper functions for Drive ─────────── */
 
 function countDriveVideos(string $folderId, string $apiKey): int {
     return count(listDriveVideos($folderId, $apiKey));
@@ -86,7 +90,7 @@ function listDriveVideos(string $folderId, string $apiKey): array {
              . "&key=$apiKey";
 
         $json = curlGet($url);
-        foreach ($json['files'] ?? [] as $f) {
+        foreach ($json['files'] as $f) {
             $out[] = ['id'=>$f['id'], 'name'=>$f['name']];
         }
         $pageToken = $json['nextPageToken'] ?? null;
@@ -107,7 +111,7 @@ function curlGet(string $url): array {
     curl_close($ch);
 
     if ($raw === false) {
-        throw new RuntimeException("cURL GET error for $url");
+        throw new RuntimeException("cURL error requesting $url");
     }
     if ($code >= 400) {
         throw new RuntimeException("Drive metadata fetch failed HTTP $code");
