@@ -22,7 +22,7 @@ register_shutdown_function(function () {
   }
 });
 
-// --- ERROR LOGGER ---
+// --- ERROR LOGGER ----------------------------------------------------------
 function log_error($context, $detail, $extra = []) {
   $log = [
     'timestamp' => date('c'),
@@ -32,6 +32,7 @@ function log_error($context, $detail, $extra = []) {
   file_put_contents('error_log.jsonl', json_encode($log) . "\n", FILE_APPEND);
 }
 
+// --- PARSE INPUT -----------------------------------------------------------
 $req = json_decode(file_get_contents('php://input'), true) ?: [];
 
 $folderId     = trim($req['folderId']     ?? '');
@@ -46,6 +47,8 @@ if (!$folderId || !$googleApiKey || !$fbToken || !$adAccount) {
 
 $FB_VER = 'v19.0';
 
+// ---------------------------------------------------------------------------
+// CURL helper
 function curl_json(string $url, array $post = null): array {
   $ch = curl_init($url);
   curl_setopt_array($ch, [
@@ -89,7 +92,7 @@ function listDriveVideos(string $folderId, string $apiKey): array {
   return $out;
 }
 
-// --- SMART DOWNLOADER ---
+// --- SMART DOWNLOADER ------------------------------------------------------
 function downloadTmp(string $fileId, string $apiKey): ?string {
   $url = "https://www.googleapis.com/drive/v3/files/{$fileId}?alt=media&key={$apiKey}";
   $tmp = tempnam(sys_get_temp_dir(), 'vid_') . '.mp4';
@@ -139,6 +142,7 @@ function downloadTmp(string $fileId, string $apiKey): ?string {
   return null;
 }
 
+// --- FACEBOOK HELPERS ------------------------------------------------------
 function listFBVideos(string $act, string $token, string $ver): array {
   $url = "https://graph.facebook.com/{$ver}/{$act}/advideos?fields=id,title&limit=5000&access_token=" . urlencode($token);
   $map = [];
@@ -212,23 +216,36 @@ function fbUpload(string $tmp, string $fname, string $act, string $token, string
   return [$finish['video_id'] ?? null, null];
 }
 
+// --- STREAMING INITIALISATION ---------------------------------------------
+if ($stream) {
+  header('Content-Type: application/x-ndjson; charset=utf-8');
+  header('Cache-Control: no-cache');
+  header('Connection: keep-alive');
+  header('X-Accel-Buffering: no');           // nginx: disable FastCGI buffering
+
+  while (ob_get_level()) { ob_end_flush(); } // remove any PHP output buffers
+  ob_implicit_flush(true);                   // auto-flush after every echo/print
+
+  echo str_repeat(' ', 2048) . "\n";         // padding so browsers start rendering
+}
+
+// --- EMIT HELPER -----------------------------------------------------------
 function emitRow(array $row, bool $stream): void {
   if ($stream) {
     echo json_encode($row) . "\n";
-    @ob_flush();
-    @flush();
   }
 }
 
+// ---------------------------------------------------------------------------
 // Fetch existing FB videos
 $fbMap = listFBVideos($adAccount, $fbToken, $FB_VER);
 if (isset($fbMap['_error'])) {
-  echo json_encode([[ 
-    'filename'  => null,
-    'video_id'  => null,
-    'error'     => 'fb_list_fail',
-    'detail'    => $fbMap['_error']['message'] ?? $fbMap['_error'],
-    'skipped'   => false
+  echo json_encode([[
+    'filename' => null,
+    'video_id' => null,
+    'error'    => 'fb_list_fail',
+    'detail'   => $fbMap['_error']['message'] ?? $fbMap['_error'],
+    'skipped'  => false
   ]]);
   exit;
 }
@@ -236,7 +253,7 @@ if (isset($fbMap['_error'])) {
 // List & upload new videos from Drive
 $files = listDriveVideos($folderId, $googleApiKey);
 if (isset($files['error'])) {
-  echo json_encode([[ 
+  echo json_encode([[
     'filename' => null,
     'video_id' => null,
     'error'    => $files['error'],
@@ -245,14 +262,11 @@ if (isset($files['error'])) {
   exit;
 }
 
-if ($stream) {
-  header('Content-Type: application/x-ndjson');
-  header('X-Accel-Buffering: no');
-}
-
 $result = [];
 foreach ($files as $f) {
   $base = pathinfo($f['name'], PATHINFO_FILENAME);
+
+  // Skip duplicates already on FB
   if (isset($fbMap[$base])) {
     $row = [
       'filename' => $f['name'],
@@ -265,6 +279,7 @@ foreach ($files as $f) {
     continue;
   }
 
+  // Download from Drive
   $tmp = downloadTmp($f['id'], $googleApiKey);
   if (!$tmp) {
     $row = [
@@ -279,6 +294,7 @@ foreach ($files as $f) {
     continue;
   }
 
+  // Upload to Facebook
   [$vid, $err] = fbUpload($tmp, $f['name'], $adAccount, $fbToken, $FB_VER);
   unlink($tmp);
 
@@ -291,22 +307,24 @@ foreach ($files as $f) {
   $result[] = $row;
   emitRow($row, $stream);
 
-  // --- NEW: LOG SUCCESS OR FAILURE ---
+  // --- LOG SUCCESS OR FAILURE --------------------------------------------
   if ($vid && !$err) {
     log_error('upload', 'Video uploaded successfully', [
       'filename' => $f['name'],
       'video_id' => $vid
     ]);
-  } else if ($err) {
+  } elseif ($err) {
     log_error('upload', 'Video upload error', [
       'filename' => $f['name'],
-      'error' => $err
+      'error'    => $err
     ]);
   }
 }
 
-// Save for XLSX export
+// Save for XLSX export / API consumption
 file_put_contents('latest_fb_ids.json', json_encode($result, JSON_PRETTY_PRINT));
+
 if (!$stream) {
+  // Classic one-shot JSON array (non-stream mode)
   echo json_encode($result);
 }
