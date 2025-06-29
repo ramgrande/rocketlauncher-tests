@@ -1,57 +1,66 @@
-/*  Facebook Rocket‑Launcher – front‑end logic
+/*  Facebook Rocket‑Launcher – front‑end logic
     ===============================================================
-    © 2025 – MIT‑licensed sample code.  No warranty; use at your own
-    discretion and be sure to review OAuth / Graph API limits, etc.
+    v1.2  (2025‑06‑29)
+      • duplicate‑video handling
+      • EventSource auto‑reconnect + heartbeat
+      • same XLSX generator as v1.0
+      • prettier secret‑eye toggle
+      • no external deps beyond XLSX.js
 */
 
-window.addEventListener('DOMContentLoaded', function () {
+window.addEventListener('DOMContentLoaded', () => {
 
-  /*━━━━━━━━━━━━━━━━━━ 1. Tiny helpers ━━━━━━━━━━━━━━━━━━*/
-  const $ = sel => document.querySelector(sel);
+  /*━━━━━━━━━━━━━━━━━━ 0. Tiny helpers ━━━━━━━━━━━━━━━━━━*/
+  const $    = s => document.querySelector(s);
+  const $$   = s => [...document.querySelectorAll(s)];
+  const stripExt = n => n.replace(/\.[^.]+$/, '');
 
-  // Show / hide secret inputs (Google key & FB token)
-  $('#toggleToken')    ?.addEventListener('click', () => toggleSecret('#accessToken',  '#eyeIcon'));
-  $('#toggleGoogleKey')?.addEventListener('click', () => toggleSecret('#googleApiKey', '#googleEyeIcon'));
-
+  /*━━━━━━━━ 1. Toggle visibility for secret inputs ━━━━━*/
+  if ($('#toggleToken')) {
+    $('#toggleToken').addEventListener('click', () => toggleSecret('#accessToken',  '#eyeIcon'));
+  }
+  if ($('#toggleGoogleKey')) {
+    $('#toggleGoogleKey').addEventListener('click', () => toggleSecret('#googleApiKey', '#googleEyeIcon'));
+  }
   function toggleSecret(inputSel, iconSel) {
-    const inp = $(inputSel);
-    const ico = $(iconSel);
+    const inp = $(inputSel), ico = $(iconSel);
     if (!inp || !ico) return;
     if (inp.type === 'password') { inp.type = 'text';  ico.textContent = '🙈'; }
     else                         { inp.type = 'password'; ico.textContent = '👁️'; }
   }
 
-  /** Read a `fetch` Response safely as JSON or throw the raw text. */
-  async function safeJson(resp) {
-    const raw = await resp.text();
-    try { return JSON.parse(raw); }
-    catch { throw new Error(raw || resp.statusText); }
+  /*━━━━━━━━━━━━━━━━ 2. Safe JSON fetch ━━━━━━━━━━━━━━━━*/
+  async function safeJson(resp){
+    const t = await resp.text();
+    try { return JSON.parse(t); } catch { throw new Error(t || resp.statusText); }
   }
 
-  /*━━━━━━━━━━━━━━━━━━ 2. Upload‑log helpers ━━━━━━━━━━━━*/
-  const rowMap   = Object.create(null);   // filename → <tr>
-  let doneCount  = 0;
+  /*━━━━━━━━━━━━━━━━ 3. Upload‑log helpers ━━━━━━━━━━━━━*/
+  const rowMap  = Object.create(null);
+  let remaining = 0;
 
-  function makeRow(filename, status = 'Queued') {
+  function makeRow(fn, status='Queued'){
     const tr = document.createElement('tr');
     tr.innerHTML = `
-      <td>${filename}</td>
+      <td>${fn}</td>
       <td class="vidId"></td>
       <td class="statCell">
         <div class="bar"><div class="fill" style="width:0"></div></div>
         <span class="txt">${status}</span>
       </td>`;
-    document.querySelector('.log-table tbody')?.appendChild(tr);
-    rowMap[filename] = tr;
+    const logTable = $('.log-table tbody');
+    if (logTable) logTable.appendChild(tr);
+    rowMap[fn] = tr;
   }
-
-  function updateBar(tr, pct, txt) {
+  const updateBar = (tr, pct, txt) => {
     if (!tr) return;
-    tr.querySelector('.fill').style.width = pct + '%';
-    tr.querySelector('.txt').textContent  = txt;
-  }
+    const fill = tr.querySelector('.fill');
+    const txtSpan = tr.querySelector('.txt');
+    if (fill) fill.style.width = pct + '%';
+    if (txtSpan) txtSpan.textContent = txt;
+  };
 
-  /*━━━━━━━━━━━━━━━━━━ 3. Campaign template data ━━━━━━━*/
+  /*━━━━━━━━━━━━━━━━━━ 4. Campaign template data ━━━━━━━*/
   const headers = [
     "Campaign ID","Campaign Name","Campaign Status","Campaign Objective","Buying Type",
     "Campaign Start Time","New Objective","Buy With Prime Type","Is Budget Scheduling Enabled For Campaign",
@@ -91,17 +100,16 @@ window.addEventListener('DOMContentLoaded', function () {
   const idxTitle        = headers.indexOf("Title");
   const idxLink         = headers.indexOf("Link");
 
-  const stripExt = name => name.replace(/\.[^.]+$/, '');
-
   /* Prefill textboxes so the user sees something */
-  $('#bodyField').value         = placeholderRow[idxBody]  ?? '';
-  $('#titleField').value        = placeholderRow[idxTitle] ?? '';
-  $('#linkField').value         = placeholderRow[idxLink]  ?? '';
-  $('#campaignNameField').value = placeholderRow[idxCampaignName] ?? '';
+  if ($('#bodyField'))         $('#bodyField').value         = placeholderRow[idxBody]  ?? '';
+  if ($('#titleField'))        $('#titleField').value        = placeholderRow[idxTitle] ?? '';
+  if ($('#linkField'))         $('#linkField').value         = placeholderRow[idxLink]  ?? '';
+  if ($('#campaignNameField')) $('#campaignNameField').value = placeholderRow[idxCampaignName] ?? '';
 
-  /*━━━━━━━━━━━━━━━━━━ 4. Campaign structure picker ━━━━*/
+  /*━━━━━━━━━━━━━━━━━━ 5. Campaign structure picker ━━━━*/
   function renderStructurePicker(videoCount = 10) {
     const el = $('#structurePicker');
+    if (!el) return;
     el.innerHTML = `
       <div class="structure-picker">
         <div class="structure-title">Campaign Structure</div>
@@ -123,23 +131,24 @@ window.addEventListener('DOMContentLoaded', function () {
         </div>
       </div>`;
     const numInput = $('#adsetNumInput');
-    numInput.disabled = true;
-    document.querySelectorAll('input[name="structure"]').forEach(r =>
-      r.addEventListener('change', () => { numInput.disabled = r.value !== 'custom'; })
+    if (numInput) numInput.disabled = true;
+    $$('#structurePicker input[name="structure"]').forEach(r =>
+      r.addEventListener('change', () => { if (numInput) numInput.disabled = r.value !== 'custom'; })
     );
-    numInput.addEventListener('input', () => {
+    if (numInput) numInput.addEventListener('input', () => {
       const v = Math.max(1, Math.min(videoCount, parseInt(numInput.value || '1', 10)));
       numInput.value = v;
     });
   }
   renderStructurePicker();
 
-  /*━━━━━━━━━━━━━━━━━━ 5. XLSX preview pane ━━━━━━━━━━━*/
+  /*━━━━━━━━━━━━━━━━━━ 6. XLSX preview pane ━━━━━━━━━━━*/
   let rows        = [ placeholderRow.slice() ];
   let globalData  = [];
 
   function populatePreview() {
     const cont = $('#previewContainer');
+    if (!cont) return;
     cont.innerHTML = '';
     const wrap = document.createElement('div');
     wrap.className = 'form-container';
@@ -153,65 +162,73 @@ window.addEventListener('DOMContentLoaded', function () {
   }
   populatePreview();
 
-  /*━━━━━━━━━━━━━━━━━━ 6. “Load All Uploaded” button ━━*/
-  $('#loadBtn').addEventListener('click', async () => {
-    try {
-      const r = await fetch('latest_fb_ids.json?ts=' + Date.now());
-      if (!r.ok) throw new Error('latest_fb_ids.json not found');
-      const data = await r.json();
-      if (!Array.isArray(data) || data.length === 0) throw new Error('JSON must be a non‑empty array');
+  /*━━━━━━━━━━━━━━━━━━ 7. “Load All Uploaded” button ━━*/
+  const loadBtn = $('#loadBtn');
+  if (loadBtn) {
+    loadBtn.addEventListener('click', async () => {
+      try {
+        const r = await fetch('latest_fb_ids.json?ts=' + Date.now());
+        if (!r.ok) throw new Error('latest_fb_ids.json not found');
+        const data = await r.json();
+        if (!Array.isArray(data) || data.length === 0) throw new Error('JSON must be a non‑empty array');
 
-      globalData = data;
-      rows = [];
-      const campNameInput = $('#campaignNameField').value.trim();
+        globalData = data;
+        rows = [];
+        const campNameInput = $('#campaignNameField')?.value.trim() || '';
 
-      data.forEach(({ filename, video_id }) => {
-        const r  = placeholderRow.slice();
-        r[idxVideoID]      = video_id;
-        r[idxVideoFile]    = filename;
-        r[idxCampaignName] = campNameInput || r[idxCampaignName];
-        r[idxAdName]       = stripExt(filename);
-        rows.push(r);
-      });
+        data.forEach(({ filename, video_id }) => {
+          const row  = placeholderRow.slice();
+          row[idxVideoID]      = video_id;
+          row[idxVideoFile]    = filename;
+          row[idxCampaignName] = campNameInput || row[idxCampaignName];
+          row[idxAdName]       = stripExt(filename);
+          rows.push(row);
+        });
 
-      renderStructurePicker(data.length);
-      populatePreview();
-      alert(`Loaded ${rows.length} video${rows.length > 1 ? 's' : ''}.`);
-    } catch (err) { alert(err.message); }
-  });
+        renderStructurePicker(data.length);
+        populatePreview();
+        alert(`Loaded ${rows.length} video${rows.length > 1 ? 's' : ''}.`);
+      } catch (err) { alert(err.message); }
+    });
+  }
 
-  /*━━━━━━━━━━━━━━━━━━ 7. Download XLSX button ━━━━━━━━*/
-  $('#downloadBtn').addEventListener('click', () => {
-    if (!globalData.length) { alert('Load video IDs first.'); return; }
+  /*━━━━━━━━━━━━━━━━━━ 8. Download XLSX button ━━━━━━━━*/
+  const downloadBtn = $('#downloadBtn');
+  if (downloadBtn) {
+    downloadBtn.addEventListener('click', () => {
+      if (!globalData.length) { alert('Load video IDs first.'); return; }
 
-    const structure = document.querySelector('input[name="structure"]:checked').value;
-    let finalRows   = [];
+      const structureRadio = document.querySelector('input[name="structure"]:checked');
+      if (!structureRadio) { alert('Select a campaign structure.'); return; }
+      const structure = structureRadio.value;
+      let finalRows   = [];
 
-    if (structure === 'one-adset') {
-      finalRows = rows;
-    } else if (structure === 'abo-1to1') {
-      finalRows = rows.map((r, i) => {
-        const cp = r.slice();
-        cp[idxAdSetName] = `Adset #${i + 1}`;
-        return cp;
-      });
-    } else {                       // custom n ad sets
-      const n = parseInt($('#adsetNumInput').value, 10) || 1;
-      finalRows = rows.map((r, i) => {
-        const cp = r.slice();
-        cp[idxAdSetName] = `Adset #${(i % n) + 1}`;
-        return cp;
-      });
-    }
+      if (structure === 'one-adset') {
+        finalRows = rows;
+      } else if (structure === 'abo-1to1') {
+        finalRows = rows.map((r, i) => {
+          const cp = r.slice();
+          cp[idxAdSetName] = `Adset #${i + 1}`;
+          return cp;
+        });
+      } else {                       // custom n ad sets
+        const n = parseInt($('#adsetNumInput')?.value, 10) || 1;
+        finalRows = rows.map((r, i) => {
+          const cp = r.slice();
+          cp[idxAdSetName] = `Adset #${(i % n) + 1}`;
+          return cp;
+        });
+      }
 
-    /* Build workbook & download */
-    const wb = XLSX.utils.book_new();
-    const ws = XLSX.utils.aoa_to_sheet([headers, ...finalRows]);
-    XLSX.utils.book_append_sheet(wb, ws, 'Sheet1');
-    XLSX.writeFile(wb, 'facebook_campaign.xlsx');
-  });
+      /* Build workbook & download */
+      const wb = XLSX.utils.book_new();
+      const ws = XLSX.utils.aoa_to_sheet([headers, ...finalRows]);
+      XLSX.utils.book_append_sheet(wb, ws, 'Sheet1');
+      XLSX.writeFile(wb, 'facebook_campaign.xlsx');
+    });
+  }
 
-  /*━━━━━━━━━━━━━━━━━━ 8. Facebook "Exists" check helper ━━━━━━━━━━━━*/
+  /*━━━━━━━━━━━━━━━━━━ 9. Facebook "Exists" check helper ━━━━━━━━━━━━*/
   async function facebookVideoExists(filename, accessToken, accountId) {
     // Fetch existing videos and compare titles
     try {
@@ -240,132 +257,100 @@ window.addEventListener('DOMContentLoaded', function () {
     }
   }
 
-  /*━━━━━━━━━━━━━━━━━━ 9. Upload workflow – with pre-check ━━━━━━━━━━━━*/
-  $('#uploadForm').addEventListener('submit', async e => {
-    e.preventDefault();
+  /*━━━━━━━━━━━━━━━━━━ 10. Main upload workflow ━━━━━━━━━━━*/
+  const uploadForm = $('#uploadForm');
+  if (uploadForm) {
+    uploadForm.addEventListener('submit', async e => {
+      e.preventDefault();
 
-    const folderId     = $('#folderId').value.trim();
-    const accessToken  = $('#accessToken').value.trim();
-    const accountId    = $('#accountId').value.trim();
-    const googleApiKey = $('#googleApiKey').value.trim();
-    const uploadBtn    = $('#uploadBtn');
-    const logDiv       = $('#uploadLogContainer');
+      const folderId     = $('#folderId'    )?.value.trim() || '';
+      const googleApiKey = $('#googleApiKey')?.value.trim() || '';
+      const accessToken  = $('#accessToken' )?.value.trim() || '';
+      const accountId    = $('#accountId'   )?.value.trim() || '';
+      const uploadBtn    = $('#uploadBtn');
+      const logDiv       = $('#uploadLogContainer');
 
-    uploadBtn.disabled = true;
-    logDiv.innerHTML   = '';
+      if (uploadBtn) uploadBtn.disabled = true;
+      if (logDiv) logDiv.innerHTML = '';
 
-    // 1. Count files from Google Drive (get list of file names)
-    let fileNames = [];
-    let fileCount = 0;
-    try {
-      const r  = await fetch('upload.php', {
-        method : 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body   : JSON.stringify({ folderId, accessToken, accountId, googleApiKey, count: true })
-      });
-      if (!r.ok) throw new Error(await r.text());
-      const js = await safeJson(r);
-      fileCount = +js.count || 0;
-      fileNames = js.files || []; // Expect js.files to be an array of file names
-      if (!fileNames.length) throw new Error("No files found in Google Drive folder.");
-    } catch (err) {
-      logDiv.textContent = 'Count failed: ' + err.message;
-      uploadBtn.disabled = false;
-      return;
-    }
-
-    // 2. Draw table skeleton
-    logDiv.innerHTML = '<b>Upload Log:</b>';
-    logDiv.insertAdjacentHTML('beforeend', `
-      <table class="log-table">
-        <thead><tr><th>Filename</th><th>Video ID</th><th>Status</th></tr></thead>
-        <tbody></tbody>
-      </table>`);
-
-    // 3. Check Facebook for existing videos
-    const uploadQueue = [];
-    let skippedCount = 0;
-
-    for (const fn of fileNames) {
-      const skip = await facebookVideoExists(fn, accessToken, accountId);
-      if (skip) {
-        makeRow(fn, 'Skipped 🚫');
-        skippedCount++;
-      } else {
-        makeRow(fn, 'Queued');
-        uploadQueue.push(fn);
-      }
-    }
-
-    if (skippedCount)
-      logDiv.insertAdjacentHTML('beforeend', `<div style="color:#009900;">${skippedCount} video${skippedCount>1?'s':''} skipped (already uploaded to Facebook)</div>`);
-
-    if (!uploadQueue.length) {
-      logDiv.insertAdjacentHTML('beforeend', '<div style="color:#d00;">No videos left to upload.</div>');
-      uploadBtn.disabled = false;
-      return;
-    }
-
-    // 4. Kick off upload job for files in uploadQueue only
-    let jobId;
-    try {
-      const r = await fetch('upload.php', {
-        method : 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body   : JSON.stringify({
-          folderId, accessToken, accountId, googleApiKey, files: uploadQueue // <--- only new files
-        })
-      });
-      if (!r.ok) throw new Error(await r.text());
-      const js = await safeJson(r);
-      jobId = js.jobId;
-    } catch (err) {
-      logDiv.textContent = 'Could not start upload: ' + err.message;
-      uploadBtn.disabled = false;
-      return;
-    }
-
-    // 5. Live progress via Server-Sent Events
-    let lastBeat = Date.now();
-    const es = new EventSource(`progress.php?jobId=${encodeURIComponent(jobId)}`);
-
-    es.onmessage = ev => {
-      lastBeat = Date.now();
-      const m = JSON.parse(ev.data);
-
-      if (m.init) {
-        m.files.forEach(fn => makeRow(fn));
+      /* 10‑A ── ask the server how many files it will touch */
+      let fileCount = 0;
+      try{
+        const r = await fetch('upload.php',{
+          method:'POST',headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({folderId,googleApiKey,accessToken,accountId,count:true})
+        });
+        if (!r.ok) throw new Error(await r.text());
+        fileCount = (+await r.text())|0;
+      }catch(err){
+        if (logDiv) logDiv.textContent = 'Count failed: '+err.message;
+        if (uploadBtn) uploadBtn.disabled = false;
         return;
       }
-      if (m.phase === 'download' || m.phase === 'upload') {
-        const verb = m.phase === 'download' ? 'Downloading' : 'Uploading';
-        updateBar(rowMap[m.filename], m.pct, `${verb} – ${m.pct}%`);
+
+      /* 10‑B ── draw empty log table */
+      if (logDiv) logDiv.innerHTML = '<b>Upload Log:</b><table class="log-table"><thead><tr><th>Filename</th><th>Video ID</th><th>Status</th></tr></thead><tbody></tbody></table>';
+
+      /* 10‑C ── start the job */
+      let jobId='';
+      try{
+        const r = await fetch('upload.php',{
+          method:'POST',headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({folderId,googleApiKey,accessToken,accountId})
+        });
+        if(!r.ok) throw new Error(await r.text());
+        jobId = (await safeJson(r)).jobId;
+      }catch(err){
+        if (logDiv) logDiv.textContent = 'Could not start upload: '+err.message;
+        if (uploadBtn) uploadBtn.disabled = false;
         return;
       }
-      if (m.phase === 'done') {
-        const ok = m.status === 'success';
-        const tr = rowMap[m.filename];
-        if (tr) tr.querySelector('.vidId').textContent = m.video_id || '';
-        updateBar(tr, 100, ok ? 'Uploaded ✅' : 'Failed ❌');
-        doneCount++;
-        if (doneCount === uploadQueue.length) uploadBtn.disabled = false;
-      }
-    };
 
-    es.onerror = () => {
-      es.close();
-      logDiv.insertAdjacentHTML('beforeend', '<div class="error">Connection lost.</div>');
-      uploadBtn.disabled = false;
-    };
+      /* 10‑D ── live updates via SSE (with auto‑reconnect) */
+      let es, lastBeat=Date.now(), closed=false;
+      const connect = () => {
+        es = new EventSource(`progress.php?jobId=${encodeURIComponent(jobId)}`);
+        es.onmessage = ev => {
+          lastBeat = Date.now();
+          const m = JSON.parse(ev.data);
 
-    // Heartbeat counter
-    setInterval(() => {
-      const ago = Math.round((Date.now() - lastBeat) / 1000);
-      logDiv.querySelector('.heartbeat')?.remove();
-      logDiv.insertAdjacentHTML('beforeend',
-        `<div class="heartbeat">Last activity ${ago}s ago</div>`);
-    }, 1000);
+          if (m.init){
+            m.files.forEach(fn=>makeRow(fn));
+            remaining = m.files.length;
+            return;
+          }
+          const tr = rowMap[m.filename];
+          if (m.phase==='download' || m.phase==='upload'){
+            const verb = m.phase==='download' ? 'Downloading' : 'Uploading';
+            updateBar(tr, m.pct, `${verb} – ${m.pct}%`);
+            return;
+          }
+          if (m.phase==='done'){
+            if (m.status==='duplicate'){
+              updateBar(tr,100,'Skipped ♻️');
+              if (tr) tr.querySelector('.vidId').textContent = m.video_id;
+            }else if (m.status==='success'){
+              updateBar(tr,100,'Uploaded ✅');
+              if (tr) tr.querySelector('.vidId').textContent = m.video_id;
+            }else{
+              updateBar(tr,100,'Failed ❌');
+            }
+            if(--remaining===0){ if (uploadBtn) uploadBtn.disabled=false; es.close(); closed=true; }
+          }
+        };
+        es.onerror = () => { es.close(); if(!closed) setTimeout(connect,1600); };
+      };
+      connect();
 
-  });
+      /* 10‑E ── heartbeat overlay so users know it’s alive */
+      setInterval(()=>{
+        const ago = Math.round((Date.now()-lastBeat)/1000);
+        if (logDiv) {
+          logDiv.querySelector('.heartbeat')?.remove();
+          if(!closed) logDiv.insertAdjacentHTML('beforeend',`<div class="heartbeat">Last activity ${ago}s ago</div>`);
+        }
+      },1000);
+    });
+  }
 
 });
