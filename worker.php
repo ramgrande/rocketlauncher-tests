@@ -1,7 +1,7 @@
 <?php
 /**
- * worker.php – background job executor with Facebook pre-check
- * Usage (CLI): php worker.php <jobId>
+ * worker.php – CLI‐only background job executor with Facebook pre‐check
+ * Usage: php worker.php <jobId>
  */
 declare(strict_types=1);
 error_reporting(E_ALL);
@@ -9,44 +9,43 @@ ini_set('display_errors','0');
 ini_set('log_errors','1');
 ini_set('error_log', __DIR__.'/php-error.log');
 
+// --- Debug helper ----------------------------------------------------------
 $debugFile = __DIR__ . '/jobs/debug.log';
 function dbg(string $msg): void {
     global $debugFile;
     file_put_contents($debugFile, date('c').' | '.$msg."\n", FILE_APPEND);
 }
 
-// ── 1) Startup ─────────────────────────────────────────
+// 1) START
 dbg("START worker.php");
 
-// Determine jobId (CLI or HTTP)
+// 2) Strict CLI‐only invocation
 if (php_sapi_name() === 'cli' && !empty($argv[1])) {
     $jobId = $argv[1];
     dbg("JobId from CLI: {$jobId}");
-} elseif (!empty($_GET['jobId'])) {
-    $jobId = $_GET['jobId'];
-    dbg("JobId from HTTP GET: {$jobId}");
 } else {
-    dbg("ERROR: Missing jobId");
+    dbg("ERROR: worker must be run via CLI with jobId");
     exit(1);
 }
 
 $jobDir       = __DIR__ . '/jobs';
-$metaFile     = "$jobDir/{$jobId}.json";
-$progressFile = "$jobDir/{$jobId}.progress";
+$metaFile     = "{$jobDir}/{$jobId}.json";
+$progressFile = "{$jobDir}/{$jobId}.progress";
 
+// 3) Validate metadata
 if (!is_file($metaFile)) {
     dbg("ERROR: Meta file not found: {$metaFile}");
     exit(1);
 }
 dbg("Loaded meta file");
 
-// ── 2) Load job metadata ──────────────────────────────
-$meta    = json_decode(file_get_contents($metaFile), true);
-$files   = $meta['files']  ?? [];
-$params  = $meta['params'] ?? [];
+// 4) Load metadata
+$meta   = json_decode(file_get_contents($metaFile), true);
+$files  = $meta['files']  ?? [];
+$params = $meta['params'] ?? [];
 dbg("Found ".count($files)." files in job");
 
-// ── 3) Fetch existing FB video titles ─────────────────
+// 5) Fetch existing FB titles for pre‐check
 dbg("Fetching existing FB video titles…");
 $existingFB = [];
 $after      = null;
@@ -65,60 +64,63 @@ do {
 } while ($after);
 dbg("Found ".count($existingFB)." existing FB titles");
 
-// ── 4) Prepare progress file ──────────────────────────
+// 6) Initialize/truncate progress file
 file_put_contents($progressFile, '');
 dbg("Truncated progress file");
 
-// ── 5) Main loop ──────────────────────────────────────
+// 7) Main processing loop
 foreach ($files as $i => $f) {
     $name = $f['name'];
-    dbg("[$i] Processing {$name}");
+    dbg("[{$i}] Processing: {$name}");
     $base = pathinfo($name, PATHINFO_FILENAME);
 
-    // Pre-check: skip if already on FB
+    // 7a) Pre‐check skip
     if (isset($existingFB[$base])) {
-        dbg("[$i] Skipping {$name} (already on Facebook)");
+        dbg("[{$i}] Skipping {$name} (already on FB)");
         progress('skip', $name, 100, 'skipped');
         continue;
     }
 
     try {
-        // Download
-        dbg("[$i] download start");
+        // 7b) Download
+        dbg("[{$i}] download start");
         progress('download', $name, 0);
         $tmp = downloadDriveFile($f['id'], $name, $params['googleApiKey']);
         progress('download', $name, 100);
-        dbg("[$i] downloaded to {$tmp}");
+        dbg("[{$i}] downloaded to {$tmp}");
 
-        // Upload (include title so it matches our check)
-        dbg("[$i] upload start");
+        // 7c) Upload (include title)
+        dbg("[{$i}] upload start");
         progress('upload', $name, 0);
         $vid = fbUploadVideo($tmp, $params['accessToken'], $params['accountId'], $base);
         progress('upload', $name, 100);
-        dbg("[$i] uploaded, got video_id={$vid}");
+        dbg("[{$i}] uploaded, video_id={$vid}");
 
-        // Done
+        // 7d) Done
         progress('done', $name, 100, 'success', ['video_id' => $vid]);
         @unlink($tmp);
-        dbg("[$i] done successfully");
-    }
-    catch (Throwable $e) {
-        dbg("[$i] ERROR: ".$e->getMessage());
+        dbg("[{$i}] done successfully");
+
+    } catch (Throwable $e) {
+        dbg("[{$i}] ERROR: ".$e->getMessage());
         progress('done', $name, 100, 'error', ['error' => $e->getMessage()]);
     }
 }
 
-// ── 6) Signal completion ───────────────────────────────
-touch("$jobDir/{$jobId}.done");
+// 8) Signal overall completion
+touch("{$jobDir}/{$jobId}.done");
 dbg("FINISHED worker.php\n");
 
 
-// ── Helper functions ───────────────────────────────────
+// ─── Helper functions ────────────────────────────────────────────────────
 
 function progress(string $phase, string $file, int $pct, string $status='running', array $extra=[]): void {
     global $progressFile;
     $data = array_merge([
-        'phase'=>$phase,'filename'=>$file,'pct'=>$pct,'status'=>$status
+        'phase'=>$phase,
+        'filename'=>$file,
+        'pct'=>$pct,
+        'status'=>$status,
     ], $extra);
     file_put_contents($progressFile, json_encode($data)."\n", FILE_APPEND);
 }
@@ -127,14 +129,10 @@ function downloadDriveFile(string $id, string $name, string $apiKey): string {
     $dest = sys_get_temp_dir().'/'.basename($name);
     $url1 = "https://www.googleapis.com/drive/v3/files/{$id}?alt=media&key={$apiKey}";
     $c1   = curlDownload($url1, $dest);
-    if ($c1 < 400) {
-        return $dest;
-    }
+    if ($c1 < 400) return $dest;
     $url2 = "https://drive.google.com/uc?export=download&id={$id}";
     $c2   = curlDownload($url2, $dest);
-    if ($c2 < 400) {
-        return $dest;
-    }
+    if ($c2 < 400) return $dest;
     throw new RuntimeException("Drive download failed (API {$c1}, uc {$c2})");
 }
 
@@ -174,8 +172,8 @@ function curlGet(string $url): array {
 }
 
 /**
- * Upload a video to a Facebook Ad Account via /{account}/advideos.
- * Includes the 'title' field so our pre-check can match filename.
+ * Upload a video file to Facebook via /{account}/advideos.
+ * Sends 'title' so pre‐check works by matching filename without .mp4.
  */
 function fbUploadVideo(string $path, string $token, string $account, string $title): string {
     $endpoint = "https://graph-video.facebook.com/v19.0/{$account}/advideos";
@@ -189,11 +187,11 @@ function fbUploadVideo(string $path, string $token, string $account, string $tit
             'title'        => $title,
         ],
     ]);
-    $res = curl_exec($ch);
+    $res  = curl_exec($ch);
     curl_close($ch);
-    $json = json_decode($res, true) ?: [];
-    if (empty($json['id'])) {
+    $resp = json_decode($res, true) ?: [];
+    if (empty($resp['id'])) {
         throw new RuntimeException('Facebook upload error: '.($res ?: 'no response'));
     }
-    return $json['id'];
+    return $resp['id'];
 }
