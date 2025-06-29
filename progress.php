@@ -1,9 +1,6 @@
 <?php
 /**
- *  progress.php – SSE + inline worker w/ detailed Drive fallback debugging
- *  ----------------------------------------------------------------------
- *  Streams progress, attempts `?alt=media`, then falls back to webContentLink,
- *  and reports both HTTP status codes in any error message.
+ *  progress.php – SSE + inline worker w/ robust Drive download fallback
  */
 declare(strict_types=1);
 set_time_limit(0);
@@ -17,7 +14,7 @@ header('Content-Type: text/event-stream');
 header('Cache-Control: no-cache');
 header('Connection: keep-alive');
 
-// Load job meta
+// 1) Load job metadata
 $jobId   = $_GET['jobId'] ?? '';
 $jobFile = __DIR__ . "/jobs/{$jobId}.json";
 if (!$jobId || !is_file($jobFile)) {
@@ -25,148 +22,131 @@ if (!$jobId || !is_file($jobFile)) {
     exit;
 }
 $meta   = json_decode(file_get_contents($jobFile), true);
-$files  = $meta['files'] ?? [];
+$files  = $meta['files']  ?? [];
 $params = $meta['params'] ?? [];
 
-// Initial file list
+// 2) Send initial file list
 echo "data: ".json_encode([
-    'init'=>true,
-    'files'=>array_column($files,'name'),
+    'init'  => true,
+    'files' => array_column($files,'name'),
 ])."\n\n";
 @ob_flush(); @flush();
 
+// 3) Process each file
 foreach ($files as $f) {
     $name = $f['name'];
     try {
         sendEvent('download',$name,0);
-        $tmp = downloadDriveFile($f['id'],$name,$params['googleApiKey']);
+        $tmp = downloadDriveFile(
+            $f['id'],
+            $name,
+            $params['googleApiKey']
+        );
         sendEvent('download',$name,100);
 
         sendEvent('upload',$name,0);
-        $vid = fbUploadVideo($tmp,$params['accessToken'],$params['accountId']);
+        $vid = fbUploadVideo(
+            $tmp,
+            $params['accessToken'],
+            $params['accountId']
+        );
         sendEvent('upload',$name,100);
 
         sendEvent('done',$name,100,'success',['video_id'=>$vid]);
         @unlink($tmp);
+
     } catch (Throwable $e) {
+        // Final catch — includes HTTP codes when failing download
         sendEvent('done',$name,100,'error',['error'=>$e->getMessage()]);
     }
 }
 
-// Signal done
+// 4) Signal overall completion
 echo "event: done\ndata: {}\n\n";
 @ob_flush(); @flush();
 
 
-// ──────────────── HELPERS ───────────────────────
-
+/** Helper: emit one SSE data event **/
 function sendEvent(string $phase, string $filename, int $pct,
                    string $status='running', array $extra=[]): void
 {
     $payload = array_merge([
-        'phase'=>$phase,
-        'filename'=>$filename,
-        'pct'=>$pct,
-        'status'=>$status,
+        'phase'    => $phase,
+        'filename' => $filename,
+        'pct'      => $pct,
+        'status'   => $status,
     ], $extra);
     echo 'data: '.json_encode($payload)."\n\n";
     @ob_flush(); @flush();
 }
 
+/**
+ * Download a Drive file to a local path,
+ * 1) via API alt=media
+ * 2) fallback via uc?export=download
+ * Throws on both failures (includes both HTTP codes).
+ */
 function downloadDriveFile(string $id, string $name, string $apiKey): string
 {
     $dest = sys_get_temp_dir().'/'.basename($name);
 
-    // 1) direct alt=media
-    $url1  = "https://www.googleapis.com/drive/v3/files/{$id}?alt=media&key={$apiKey}";
-    $code1 = curlDownload($url1,$dest);
+    // Attempt #1: official API
+    $url1  = "https://www.googleapis.com/drive/v3/files/{$id}"
+           . "?alt=media&key={$apiKey}";
+    $code1 = curlDownload($url1, $dest);
     if ($code1 < 400) {
         return $dest;
     }
 
-    // 2) fetch webContentLink
-    $metaUrl = "https://www.googleapis.com/drive/v3/files/{$id}"
-             ."?fields=webContentLink&key={$apiKey}";
-    $meta    = curlGet($metaUrl);
-    $link    = $meta['webContentLink'] ?? '';
-    if (!$link) {
-        throw new RuntimeException(
-            "No webContentLink. alt=media HTTP {$code1}"
-        );
-    }
-
-    // 3) download via webContentLink
-    $code2 = curlDownload($link,$dest);
+    // Attempt #2: force-download URL
+    $url2  = "https://drive.google.com/uc?export=download&id={$id}";
+    $code2 = curlDownload($url2, $dest);
     if ($code2 < 400) {
         return $dest;
     }
 
-    // both failed
+    // Both failed: throw with both codes
     throw new RuntimeException(
-        "Drive download failed: alt=media HTTP {$code1}, "
-      . "webContentLink HTTP {$code2}"
+        "Drive download failed (alt=media HTTP {$code1}, uc?download HTTP {$code2})"
     );
 }
 
-/** cURL GET to a file path, returns HTTP status code **/
+/** cURL GET to file, returns HTTP status code **/
 function curlDownload(string $url, string $outPath): int
 {
     $ch = curl_init($url);
-    $fp = fopen($outPath,'w');
-    curl_setopt_array($ch,[
+    $fp = fopen($outPath, 'w');
+    curl_setopt_array($ch, [
         CURLOPT_FILE           => $fp,
         CURLOPT_FOLLOWLOCATION => true,
         CURLOPT_TIMEOUT        => 0,
     ]);
     curl_exec($ch);
-    $code = curl_getinfo($ch,CURLINFO_HTTP_CODE);
+    $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
     curl_close($ch);
     fclose($fp);
     return $code;
 }
 
-/** cURL GET that returns JSON array, throws on HTTP>=400 **/
-function curlGet(string $url): array
-{
-    $ch = curl_init($url);
-    curl_setopt_array($ch,[
-        CURLOPT_RETURNTRANSFER => true,
-        CURLOPT_FOLLOWLOCATION => true,
-        CURLOPT_TIMEOUT        => 30,
-    ]);
-    $raw  = curl_exec($ch);
-    $code = curl_getinfo($ch,CURLINFO_HTTP_CODE);
-    curl_close($ch);
-
-    if ($raw === false) {
-        throw new RuntimeException("cURL error for {$url}");
-    }
-    if ($code >= 400) {
-        throw new RuntimeException("Metadata request failed HTTP {$code}");
-    }
-    $json = json_decode($raw,true);
-    if (!is_array($json)) {
-        throw new RuntimeException("Invalid JSON from {$url}");
-    }
-    return $json;
-}
-
+/** Upload a video to Facebook, returns new video ID **/
 function fbUploadVideo(string $path, string $token, string $account): string
 {
     $ch = curl_init("https://graph-video.facebook.com/v19.0/{$account}/videos");
-    curl_setopt_array($ch,[
+    curl_setopt_array($ch, [
         CURLOPT_POST           => true,
         CURLOPT_RETURNTRANSFER => true,
         CURLOPT_POSTFIELDS     => [
-            'access_token'=>$token,
-            'source'=>new CURLFile($path),
+            'access_token' => $token,
+            'source'       => new CURLFile($path),
         ],
     ]);
     $res = curl_exec($ch);
     curl_close($ch);
-    $json = json_decode($res,true) ?: [];
+
+    $json = json_decode($res, true) ?: [];
     if (empty($json['id'])) {
-        throw new RuntimeException('FB upload error: '.($res?:'no response'));
+        throw new RuntimeException('Facebook upload error: '
+                                 . ($res ?: 'no response'));
     }
     return $json['id'];
 }
