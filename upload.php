@@ -15,7 +15,7 @@ $countOnly    = !empty($in['count']);
 // ─── 2) Validate ───
 if (!$folderId || !$googleApiKey || !$accessToken || !$accountId) {
     header('Content-Type: application/json');
-    echo json_encode(['error'=>'missing_param']);
+    echo json_encode(['error' => 'missing_param']);
     exit;
 }
 
@@ -31,6 +31,7 @@ if ($countOnly) {
         if ($pageToken) {
             $url .= "&pageToken=".urlencode($pageToken);
         }
+
         $ch = curl_init($url);
         curl_setopt($ch, CURLOPT_HTTPHEADER, [
             "Authorization: Bearer {$accessToken}"
@@ -46,13 +47,13 @@ if ($countOnly) {
     } while ($pageToken);
 
     header('Content-Type: application/json');
-    echo json_encode(['count'=>$count]);
+    echo json_encode(['count' => $count]);
     exit;
 }
 
-// ─── 4) Spawn the background worker ───
-// Generates a short jobId, fires cli_upload.php in the background,
-// and immediately returns the jobId as JSON.
+// ─── 4) Kick off the background worker ───
+// Generate a short jobId, fire cli_upload.php in the background,
+// and immediately return the jobId as JSON.
 $jobId = bin2hex(random_bytes(8));
 $cmd = sprintf(
     'php %s/cli_upload.php %s > /dev/null 2>&1 &',
@@ -62,5 +63,5 @@ $cmd = sprintf(
 exec($cmd);
 
 header('Content-Type: application/json');
-echo json_encode(['jobId'=>$jobId]);
+echo json_encode(['jobId' => $jobId]);
 exit;
