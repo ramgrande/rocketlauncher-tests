@@ -2,6 +2,7 @@
 /*  Facebook Rocket‑Launcher – upload.php
     ===============================================================
     v1.2  (2025‑06‑29)  – duplicate‑title check + unlimited runtime
+    v1.3  (2025‑06‑29)  – extra debug/robustness
 */
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
@@ -9,15 +10,34 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
 }
 header('Content-Type: application/json; charset=utf-8');
 
-$data = json_decode(file_get_contents('php://input'), true) ?: [];
-$folderId     = $data['folderId']     ?? '';
-$googleKey    = $data['googleApiKey'] ?? '';
-$accessToken  = $data['accessToken']  ?? '';
-$accountId    = $data['accountId']    ?? '';
+/* ====== Debug dump: see exactly what PHP receives ====== */
+$raw = file_get_contents('php://input');
+file_put_contents('raw_post.txt', $raw);
+$data = json_decode($raw, true) ?: [];
+file_put_contents('debug.json', json_encode($data, JSON_PRETTY_PRINT));
+
+/* ====== Safely extract (case-sensitive!) ====== */
+$folderId     = isset($data['folderId'])     ? trim($data['folderId'])     : '';
+$googleKey    = isset($data['googleApiKey']) ? trim($data['googleApiKey']) : '';
+$accessToken  = isset($data['accessToken'])  ? trim($data['accessToken'])  : '';
+$accountId    = isset($data['accountId'])    ? trim($data['accountId'])    : '';
 $isCountOnly  = !empty($data['count']);
 
+/* ====== Stronger missing-field reporting ====== */
 foreach (['folderId','googleApiKey','accessToken','accountId'] as $k) {
-    if (!$$k) { http_response_code(400); exit(json_encode(['error'=>"Missing $k"])); }
+    $v = ($k === 'googleApiKey') ? $googleKey : ($k === 'folderId' ? $folderId : ($k === 'accessToken' ? $accessToken : $accountId));
+    if (!isset($data[$k]) || !$v) {
+        http_response_code(400);
+        exit(json_encode([
+            'error'=>"Missing $k",
+            'debug'=>[
+                'got_keys'=>array_keys($data),
+                'raw_value'=>$data[$k] ?? null,
+                'trimmed'=>$v,
+                'all_data'=>$data
+            ]
+        ]));
+    }
 }
 
 /*─────────── 0. Run‑time ceilings – blow them away ───────────*/
