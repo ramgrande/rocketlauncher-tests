@@ -1,36 +1,46 @@
 <?php
 declare(strict_types=1);
 
-// Read JSON payload
-$input = json_decode(file_get_contents('php://input'), true) ?: [];
+// ─── 1) Read JSON or Form-POST ───
+$raw = file_get_contents('php://input');
+$in  = json_decode($raw, true) ?: $_POST;
 
-// Pull variables out
-$folderId     = $input['folderId']     ?? '';
-$accessToken  = $input['accessToken']  ?? '';
-$accountId    = $input['accountId']    ?? '';
-$googleApiKey = $input['googleApiKey'] ?? '';
-$isCountOnly  = !empty($input['count']);
+// Extract params
+$folderId     = $in['folderId']     ?? '';
+$googleApiKey = $in['googleApiKey'] ?? '';
+$accessToken  = $in['accessToken']  ?? '';
+$accountId    = $in['accountId']    ?? '';
+$countOnly    = !empty($in['count']);
 
-// If they just want a count, list and return it immediately
-if ($isCountOnly) {
+// ─── 2) Validate ───
+if (!$folderId || !$googleApiKey || !$accessToken || !$accountId) {
+    header('Content-Type: application/json');
+    echo json_encode(['error'=>'missing_param']);
+    exit;
+}
+
+// ─── 3) Count-only mode ───
+if ($countOnly) {
     $count = 0;
     $pageToken = null;
     do {
         $url = "https://www.googleapis.com/drive/v3/files"
              . "?q='".urlencode($folderId)."' in parents"
              . "&fields=nextPageToken,files(id)"
-             . ($pageToken ? "&pageToken=".urlencode($pageToken) : '');
+             . "&key=".urlencode($googleApiKey);
+        if ($pageToken) {
+            $url .= "&pageToken=".urlencode($pageToken);
+        }
         $ch = curl_init($url);
         curl_setopt($ch, CURLOPT_HTTPHEADER, [
-          "Authorization: Bearer {$accessToken}",
-          "key: {$googleApiKey}"
+            "Authorization: Bearer {$accessToken}"
         ]);
         curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
         $resp = json_decode(curl_exec($ch), true);
         curl_close($ch);
 
         if (isset($resp['files'])) {
-          $count += count($resp['files']);
+            $count += count($resp['files']);
         }
         $pageToken = $resp['nextPageToken'] ?? null;
     } while ($pageToken);
@@ -40,13 +50,16 @@ if ($isCountOnly) {
     exit;
 }
 
-// Otherwise fall through to your existing “spawn the worker” logic:
+// ─── 4) Spawn the background worker ───
+// Generates a short jobId, fires cli_upload.php in the background,
+// and immediately returns the jobId as JSON.
 $jobId = bin2hex(random_bytes(8));
-exec(sprintf(
+$cmd = sprintf(
     'php %s/cli_upload.php %s > /dev/null 2>&1 &',
     __DIR__,
     escapeshellarg($jobId)
-));
+);
+exec($cmd);
 
 header('Content-Type: application/json');
 echo json_encode(['jobId'=>$jobId]);
