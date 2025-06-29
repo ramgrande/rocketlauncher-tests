@@ -1,3 +1,4 @@
+---
 deployment:
   tasks:
     - export DEPLOYPATH=$HOME/public_html/rocketlauncher-tests
