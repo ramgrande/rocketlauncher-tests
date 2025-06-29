@@ -224,50 +224,62 @@ window.addEventListener('DOMContentLoaded', function () {
       return;
     }
 
-    // 8-D Live progress via SSE
-    let lastBeat = Date.now();
-    const es = new EventSource(`progress.php?jobId=${encodeURIComponent(jobId)}`);
+    // ─── Replace the entire “8-D Live progress via SSE” block with this ─────────
+let lastSize = 0;
 
-    es.onmessage = ev => {
-      lastBeat = Date.now();
-      const m = JSON.parse(ev.data);
+async function pollProgress() {
+  try {
+    const res = await fetch(`progress.php?jobId=${encodeURIComponent(jobId)}`);
+    if (!res.ok) throw new Error('Progress fetch failed');
+    const text = await res.text();
 
-      // init
-      if (m.init) {
-        m.files.forEach(fn => makeRow(fn));
-        return;
-      }
+    // split into lines, ignore the first init block
+    const lines = text.trim().split('\n');
+    // if first line is init, skip it
+    const dataLines = lines.filter(l => l.trim().startsWith('{'));
 
-      // skip
-      if (m.phase==='skip') {
-        const tr = rowMap[m.filename];
-        if (tr) updateBar(tr,100,'Skipped ⚠️');
-        return;
-      }
+    // only process lines we haven’t seen yet
+    for (let i = lastSize; i < dataLines.length; i++) {
+      const m = JSON.parse(dataLines[i]);
+      handleProgressMessage(m);
+    }
+    lastSize = dataLines.length;
+  } catch (err) {
+    console.error('Poll error:', err);
+    clearInterval(poller);
+    logDiv.insertAdjacentHTML('beforeend','<div class="error">Polling stopped.</div>');
+    uploadBtn.disabled = false;
+  }
+}
 
-      // download/upload progress
-      if (m.phase==='download'||m.phase==='upload') {
-        const verb = m.phase==='download'?'Downloading':'Uploading';
-        updateBar(rowMap[m.filename], m.pct, `${verb} – ${m.pct}%`);
-        return;
-      }
-
-      // done
-      if (m.phase==='done') {
-        const ok = m.status==='success';
-        const tr = rowMap[m.filename];
-        if (tr) tr.querySelector('.vidId').textContent = m.video_id||'';
-        updateBar(tr,100, ok?'Uploaded ✅':'Failed ❌');
-        doneCount++;
-        if (doneCount===fileCount) uploadBtn.disabled = false;
-      }
-    };
-
-    es.onerror = () => {
-      es.close();
-      logDiv.insertAdjacentHTML('beforeend','<div class="error">Connection lost.</div>');
+// common handler (extracted from your SSE onmessage)
+function handleProgressMessage(m) {
+  if (m.phase === 'skip') {
+    const tr = rowMap[m.filename];
+    if (tr) updateBar(tr,100,'Skipped ⚠️');
+    return;
+  }
+  if (m.phase === 'download' || m.phase === 'upload') {
+    const verb = m.phase==='download'?'Downloading':'Uploading';
+    updateBar(rowMap[m.filename], m.pct, `${verb} – ${m.pct}%`);
+    return;
+  }
+  if (m.phase === 'done') {
+    const ok = m.status === 'success';
+    const tr = rowMap[m.filename];
+    if (tr) tr.querySelector('.vidId').textContent = m.video_id||'';
+    updateBar(tr,100, ok?'Uploaded ✅':'Failed ❌');
+    doneCount++;
+    if (doneCount === fileCount) {
       uploadBtn.disabled = false;
-    };
+      clearInterval(poller);
+    }
+  }
+}
+
+// start polling once jobId is known
+const poller = setInterval(pollProgress, 1000);
+
 
     // 8-E Heartbeat
     setInterval(()=>{
