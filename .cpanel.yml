@@ -4,3 +4,5 @@ deployment:
     - export DEPLOYPATH=$HOME/public_html/rocketlauncher-tests
     - mkdir -p "$DEPLOYPATH"
     - /usr/bin/rsync -av --exclude='.git' ./ "$DEPLOYPATH/"
+
+# trigger redeploy
