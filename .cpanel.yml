@@ -1,5 +1,5 @@
 ---
 deployment:
   tasks:
-    - export DEPLOYPATH=/home/df4qde2ve6h9/public_html/rocketlauncher-tests
-    - /bin/rsync -aP --delete-after --exclude='.git' ./ $DEPLOYPATH
+    - export DEPLOYPATH=public_html/rocketlauncher-tests
+    - /bin/cp -r * $DEPLOYPATH
