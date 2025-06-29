@@ -1,14 +1,15 @@
 <?php
 declare(strict_types=1);
+set_time_limit(0);
 
-// ─── Disable all buffering / gzip so flush() actually works ─────────────────
-ini_set('zlib.output_compression', '0');
-ini_set('output_buffering', 'Off');
+// ─── Disable ALL buffering and compression ─────────────────────────────────
+ini_set('zlib.output_compression','0');
+ini_set('output_buffering','Off');
 if (function_exists('apache_setenv')) {
-    apache_setenv('no-gzip', '1');
+    apache_setenv('no-gzip','1');
 }
 ob_implicit_flush(true);
-while (ob_get_level() > 0) {
+while (ob_get_level()>0) {
     ob_end_flush();
 }
 
@@ -16,34 +17,51 @@ while (ob_get_level() > 0) {
 header('Content-Type: text/event-stream');
 header('Cache-Control: no-cache');
 header('Connection: keep-alive');
+header('X-Accel-Buffering: no');   // for nginx proxies
 
-// ─── Validate jobId and send initial file list ────────────────────────────
-$jobId  = $_GET['jobId'] ?? exit;
-$jobDir = __DIR__ . '/jobs';
-$meta   = "$jobDir/{$jobId}.json";
-$pf     = "$jobDir/{$jobId}.progress";
+// ─── Helpers ──────────────────────────────────────────────────────────────
+function sendEvent(array $data): void {
+    echo 'data: '.json_encode($data)."\n\n";
+    @ob_flush(); @flush();
+}
+
+// ─── Validate and send init ───────────────────────────────────────────────
+$jobId = $_GET['jobId'] ?? exit;
+$dir   = __DIR__.'/jobs';
+$meta  = "$dir/{$jobId}.json";
+$prog  = "$dir/{$jobId}.progress";
 
 if (!is_file($meta)) {
-    echo "data: " . json_encode(['error'=>'Unknown jobId']) . "\n\n";
+    sendEvent(['error'=>'Unknown jobId']);
     exit;
 }
 
-// send the init event
 $config = json_decode(file_get_contents($meta), true);
-$init   = ['init'=>true, 'files'=>array_column($config['files'],'name')];
-echo "data: " . json_encode($init) . "\n\n";
-@flush();
+sendEvent(['init'=>true, 'files'=>array_column($config['files'],'name')]);
 
-// ─── Start tailing from top of the progress file ───────────────────────────
-$fp = fopen($pf, 'c+');
+// ─── Emit a heartbeat comment to keep the connection alive ────────────────
+$lastBeat = time();
+$heartbeatInterval = 1;  // seconds
+
+// ─── Tail the progress file from the top ─────────────────────────────────
+$fp = fopen($prog, 'c+');
 fseek($fp, 0, SEEK_SET);
 
 while (true) {
-    // read any new lines
+    // Read any new lines and push them immediately
     while (($line = fgets($fp)) !== false) {
-        echo "data: {$line}\n\n";
-        @flush();
+        $json = json_decode($line, true);
+        if ($json !== null) {
+            sendEvent($json);
+        }
     }
-    // no new data, wait a bit
+
+    // Send a heartbeat comment every second
+    if ((time() - $lastBeat) >= $heartbeatInterval) {
+        echo ": \n\n";         // SSE comment
+        @ob_flush(); @flush();
+        $lastBeat = time();
+    }
+
     usleep(200000);
 }
