@@ -1,7 +1,7 @@
 <?php
 declare(strict_types=1);
 
-// 1) Read JSON or Form-POST
+// ─── 1) Read JSON or Form-POST ───
 $raw = file_get_contents('php://input');
 $in  = json_decode($raw, true) ?: $_POST;
 
@@ -12,14 +12,14 @@ $accessToken  = $in['accessToken']  ?? '';
 $accountId    = $in['accountId']    ?? '';
 $countOnly    = !empty($in['count']);
 
-// 2) Validate
+// ─── 2) Validate ───
 if (!$folderId || !$googleApiKey || !$accessToken || !$accountId) {
     header('Content-Type: application/json');
     echo json_encode(['error'=>'missing_param']);
     exit;
 }
 
-// 3) Count-only mode
+// ─── 3) Count-only mode ───
 if ($countOnly) {
     $count = 0;
     $pageToken = null;
@@ -31,6 +31,7 @@ if ($countOnly) {
         if ($pageToken) {
             $url .= "&pageToken=".urlencode($pageToken);
         }
+
         $ch = curl_init($url);
         curl_setopt($ch, CURLOPT_HTTPHEADER, [
             "Authorization: Bearer {$accessToken}"
@@ -46,11 +47,12 @@ if ($countOnly) {
     } while ($pageToken);
 
     header('Content-Type: application/json');
-    echo json_encode(['count'=>$count]);
+    echo json_encode(['count' => $count]);
     exit;
 }
 
-// 4) Spawn the background worker
+// ─── 4) Spawn the background worker ───
+// Generate a jobId in a way that works on all PHP versions:
 if (function_exists('random_bytes')) {
     $jobId = bin2hex(random_bytes(8));
 } elseif (function_exists('openssl_random_pseudo_bytes')) {
@@ -59,6 +61,7 @@ if (function_exists('random_bytes')) {
     $jobId = uniqid('job_', true);
 }
 
+// Fire off the CLI worker in the background
 $cmd = sprintf(
     'php %s/cli_upload.php %s > /dev/null 2>&1 &',
     __DIR__,
@@ -66,6 +69,7 @@ $cmd = sprintf(
 );
 exec($cmd);
 
+// Return the jobId to the front end
 header('Content-Type: application/json');
 echo json_encode(['jobId' => $jobId]);
 exit;
