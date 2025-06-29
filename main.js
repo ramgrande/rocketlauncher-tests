@@ -249,7 +249,8 @@ window.addEventListener('DOMContentLoaded', function () {
       return;
     }
 
-    // 8-D Polling for progress
+    // 8-D Polling for progress push test
+  
     let lastSize = 0;
     const poller = setInterval(pollProgress, 1000);
 
