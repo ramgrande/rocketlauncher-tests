@@ -1,8 +1,13 @@
 ---
 deployment:
   tasks:
+    # 1  – where the live files go
     - export DEPLOYPATH=$HOME/public_html/rocketlauncher-tests
     - mkdir -p "$DEPLOYPATH"
+
+    # 2  – sync repo → live folder
     - /usr/bin/rsync -av --exclude='.git' ./ "$DEPLOYPATH/"
 
-# trigger redeploy
+    # 3  – fix permissions so Apache never 403s
+    - /usr/bin/find "$DEPLOYPATH" -type d -exec chmod 755 {} \;
+    - /usr/bin/find "$DEPLOYPATH" -type f -exec chmod 644 {} \;
