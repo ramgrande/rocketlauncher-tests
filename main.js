@@ -24,6 +24,7 @@ window.addEventListener('DOMContentLoaded', function() {
     txt.textContent = statusText;
   }
 
+
   // ─── Your existing header/placeholder logic ───
   const headers = [
     "Campaign ID","Campaign Name","Campaign Status","Campaign Objective","Buying Type",
@@ -161,21 +162,18 @@ window.addEventListener('DOMContentLoaded', function() {
       alert("Load video IDs first.");
       return;
     }
-    // ... your existing code for building the XLSX ...
+    // …your existing XLSX build/write code here…
   });
 
   // Toggle token visibility (unchanged)
   document.getElementById('toggleToken').addEventListener('click', ()=> {
     const input = document.getElementById('accessToken');
     const eye   = document.getElementById('eyeIcon');
-    if (input.type === "password") {
-      input.type = "text"; eye.textContent = "🙈";
-    } else {
-      input.type = "password"; eye.textContent = "👁️";
-    }
+    if (input.type === "password") { input.type = "text"; eye.textContent = "🙈"; }
+    else                           { input.type = "password"; eye.textContent = "👁️"; }
   });
 
-  // ─── NEW: Count + Background‐worker upload using SSE ───
+  // ─── NEW: two‐step count + background‐worker upload with SSE ───
   document.getElementById('uploadForm').addEventListener('submit', async function(e) {
     e.preventDefault();
 
@@ -186,13 +184,14 @@ window.addEventListener('DOMContentLoaded', function() {
     const uploadBtn    = document.getElementById('uploadBtn');
     const uploadLogDiv = document.getElementById('uploadLogContainer');
 
+    // Disable button + clear old log
     uploadBtn.disabled = true;
     uploadLogDiv.innerHTML = '';
 
-    // 1) Count files
+    // 1) Count files BEFORE uploading
     let fileCount = 0;
     try {
-      const resp = await fetch('upload.php', {
+      const respCount = await fetch('upload.php', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -203,34 +202,13 @@ window.addEventListener('DOMContentLoaded', function() {
           count: true
         })
       });
-      const info = await resp.json();
+      const info = await respCount.json();
       fileCount = info.count || 0;
     } catch {
       fileCount = 0;
     }
 
-    // 2) Kick off the job and get jobId
-    let jobId;
-    try {
-      const resp2 = await fetch('upload.php', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          folderId,
-          accessToken,
-          accountId,
-          googleApiKey
-        })
-      });
-      const json = await resp2.json();
-      jobId = json.jobId;
-    } catch (err) {
-      uploadLogDiv.textContent = `Error starting upload: ${err.message || err}`;
-      uploadBtn.disabled = false;
-      return;
-    }
-
-    // 3) Build the log table skeleton
+    // 2) Build the log table skeleton
     uploadLogDiv.innerHTML = `<b>Upload Log:</b>`;
     const table = document.createElement('table');
     table.className = 'log-table';
@@ -247,9 +225,46 @@ window.addEventListener('DOMContentLoaded', function() {
     table.appendChild(tbody);
     uploadLogDiv.appendChild(table);
 
+    // Progress / heartbeat display
+    let progressMsg = document.createElement('div');
+    uploadLogDiv.insertBefore(progressMsg, table);
+
+    let lastHeartbeatTime = Date.now();
+    doneCount = 0;
+    function updateHeartbeatDisplay() {
+      const ago = Math.round((Date.now() - lastHeartbeatTime)/1000);
+      progressMsg.innerHTML =
+        `<span class="spinner"></span>Uploading... (${doneCount}/${fileCount||'?'}) ` +
+        `<span style="color:#888;font-size:.95em;">| Last activity: ${ago}s ago</span>`;
+      if (ago > 15) {
+        progressMsg.innerHTML +=
+          `<br><span style="color:#c00;">No response from server for ${ago}s – backend may be stuck.</span>`;
+      }
+    }
+    updateHeartbeatDisplay();
+    const heartbeatIntervalId = setInterval(updateHeartbeatDisplay, 1000);
+
+    // 3) Kick off the job and retrieve jobId
+    let jobId;
+    try {
+      const respJob = await fetch('upload.php', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ folderId, accessToken, accountId, googleApiKey })
+      });
+      const j = await respJob.json();
+      jobId = j.jobId;
+    } catch (err) {
+      clearInterval(heartbeatIntervalId);
+      uploadLogDiv.textContent = `Error starting upload: ${err.message || err}`;
+      uploadBtn.disabled = false;
+      return;
+    }
+
     // 4) Open SSE connection to progress.php
     const es = new EventSource(`progress.php?jobId=${jobId}`);
     es.onmessage = e => {
+      lastHeartbeatTime = Date.now();
       const msg = JSON.parse(e.data);
 
       if (msg.init) {
@@ -263,9 +278,8 @@ window.addEventListener('DOMContentLoaded', function() {
         return;
       }
       if (msg.phase === 'done') {
-        const success = (msg.status === 'success');
-        const text    = success ? 'Uploaded ✅' : 'Failed ❌';
-        updateBar(rowMap[msg.filename], 100, text);
+        const ok = (msg.status === 'success');
+        updateBar(rowMap[msg.filename], 100, ok ? 'Uploaded ✅' : 'Failed ❌');
         doneCount++;
         return;
       }
@@ -274,6 +288,7 @@ window.addEventListener('DOMContentLoaded', function() {
     es.onerror = err => {
       console.error('Progress stream error', err);
       es.close();
+      clearInterval(heartbeatIntervalId);
       uploadLogDiv.insertAdjacentHTML(
         'beforeend',
         `<div style="color:#c00; margin-top:8px;">
@@ -282,6 +297,7 @@ window.addEventListener('DOMContentLoaded', function() {
       );
       uploadBtn.disabled = false;
     };
-  });
+
+  }); // end uploadForm submit
 
 }); // end DOMContentLoaded
