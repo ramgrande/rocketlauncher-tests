@@ -211,7 +211,36 @@ window.addEventListener('DOMContentLoaded', function () {
     XLSX.writeFile(wb, 'facebook_campaign.xlsx');
   });
 
-  /*━━━━━━━━━━━━━━━━━━ 8. Upload workflow ━━━━━━━━━━━━*/
+  /*━━━━━━━━━━━━━━━━━━ 8. Facebook "Exists" check helper ━━━━━━━━━━━━*/
+  async function facebookVideoExists(filename, accessToken, accountId) {
+    // Fetch existing videos and compare titles
+    try {
+      const stripped = filename.replace(/\.[^.]+$/, '');
+      let url = `https://graph.facebook.com/v20.0/act_${accountId}/advideos?fields=title&limit=100&access_token=${encodeURIComponent(accessToken)}`;
+      let found = false;
+      let nextPage = url;
+
+      // Loop through all pages (for accounts with many videos)
+      while (nextPage && !found) {
+        const resp = await fetch(nextPage);
+        const data = await resp.json();
+        if (data.data && Array.isArray(data.data)) {
+          if (data.data.some(vid => vid.title === stripped)) {
+            found = true;
+            break;
+          }
+        }
+        nextPage = data.paging && data.paging.next ? data.paging.next : null;
+      }
+      return found;
+    } catch (err) {
+      // Log error in console, treat as not found (upload just in case)
+      console.error('FB exists check error for', filename, err);
+      return false;
+    }
+  }
+
+  /*━━━━━━━━━━━━━━━━━━ 9. Upload workflow – with pre-check ━━━━━━━━━━━━*/
   $('#uploadForm').addEventListener('submit', async e => {
     e.preventDefault();
 
@@ -225,7 +254,8 @@ window.addEventListener('DOMContentLoaded', function () {
     uploadBtn.disabled = true;
     logDiv.innerHTML   = '';
 
-    /* 8‑A  Count files first */
+    // 1. Count files from Google Drive (get list of file names)
+    let fileNames = [];
     let fileCount = 0;
     try {
       const r  = await fetch('upload.php', {
@@ -236,13 +266,15 @@ window.addEventListener('DOMContentLoaded', function () {
       if (!r.ok) throw new Error(await r.text());
       const js = await safeJson(r);
       fileCount = +js.count || 0;
+      fileNames = js.files || []; // Expect js.files to be an array of file names
+      if (!fileNames.length) throw new Error("No files found in Google Drive folder.");
     } catch (err) {
       logDiv.textContent = 'Count failed: ' + err.message;
       uploadBtn.disabled = false;
       return;
     }
 
-    /* 8‑B  Draw table skeleton */
+    // 2. Draw table skeleton
     logDiv.innerHTML = '<b>Upload Log:</b>';
     logDiv.insertAdjacentHTML('beforeend', `
       <table class="log-table">
@@ -250,13 +282,39 @@ window.addEventListener('DOMContentLoaded', function () {
         <tbody></tbody>
       </table>`);
 
-    /* 8‑C  Kick off job */
+    // 3. Check Facebook for existing videos
+    const uploadQueue = [];
+    let skippedCount = 0;
+
+    for (const fn of fileNames) {
+      const skip = await facebookVideoExists(fn, accessToken, accountId);
+      if (skip) {
+        makeRow(fn, 'Skipped 🚫');
+        skippedCount++;
+      } else {
+        makeRow(fn, 'Queued');
+        uploadQueue.push(fn);
+      }
+    }
+
+    if (skippedCount)
+      logDiv.insertAdjacentHTML('beforeend', `<div style="color:#009900;">${skippedCount} video${skippedCount>1?'s':''} skipped (already uploaded to Facebook)</div>`);
+
+    if (!uploadQueue.length) {
+      logDiv.insertAdjacentHTML('beforeend', '<div style="color:#d00;">No videos left to upload.</div>');
+      uploadBtn.disabled = false;
+      return;
+    }
+
+    // 4. Kick off upload job for files in uploadQueue only
     let jobId;
     try {
       const r = await fetch('upload.php', {
         method : 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body   : JSON.stringify({ folderId, accessToken, accountId, googleApiKey })
+        body   : JSON.stringify({
+          folderId, accessToken, accountId, googleApiKey, files: uploadQueue // <--- only new files
+        })
       });
       if (!r.ok) throw new Error(await r.text());
       const js = await safeJson(r);
@@ -267,7 +325,7 @@ window.addEventListener('DOMContentLoaded', function () {
       return;
     }
 
-    /* 8‑D   Live progress via Server‑Sent Events */
+    // 5. Live progress via Server-Sent Events
     let lastBeat = Date.now();
     const es = new EventSource(`progress.php?jobId=${encodeURIComponent(jobId)}`);
 
@@ -290,7 +348,7 @@ window.addEventListener('DOMContentLoaded', function () {
         if (tr) tr.querySelector('.vidId').textContent = m.video_id || '';
         updateBar(tr, 100, ok ? 'Uploaded ✅' : 'Failed ❌');
         doneCount++;
-        if (doneCount === fileCount) uploadBtn.disabled = false;
+        if (doneCount === uploadQueue.length) uploadBtn.disabled = false;
       }
     };
 
@@ -300,13 +358,14 @@ window.addEventListener('DOMContentLoaded', function () {
       uploadBtn.disabled = false;
     };
 
-    /* 8‑E  Heartbeat counter so the UI feels alive */
+    // Heartbeat counter
     setInterval(() => {
       const ago = Math.round((Date.now() - lastBeat) / 1000);
       logDiv.querySelector('.heartbeat')?.remove();
       logDiv.insertAdjacentHTML('beforeend',
         `<div class="heartbeat">Last activity ${ago}s ago</div>`);
     }, 1000);
+
   });
 
 });
