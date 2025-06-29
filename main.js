@@ -189,24 +189,19 @@ window.addEventListener('DOMContentLoaded', function() {
     uploadLogDiv.innerHTML = '';
 
     // 1) Count files BEFORE uploading
-    let fileCount = 0;
-    try {
-      const respCount = await fetch('upload.php', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          folderId,
-          accessToken,
-          accountId,
-          googleApiKey,
-          count: true
-        })
-      });
-      const info = await respCount.json();
-      fileCount = info.count || 0;
-    } catch {
-      fileCount = 0;
-    }
+let fileCount = 0;
+try {
+  const respCount = await fetch('upload.php', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ folderId, accessToken, accountId, googleApiKey, count: true })
+  });
+  const info = await respCount.json();
+  fileCount = info.count || 0;
+} catch (err) {
+  fileCount = 0;
+}
+
 
     // 2) Build the log table skeleton
     uploadLogDiv.innerHTML = `<b>Upload Log:</b>`;
