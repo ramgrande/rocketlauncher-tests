@@ -1,30 +1,36 @@
-/*  Facebook Rocket-Launcher – front-end logic
-    © 2025 – MIT-licensed sample code. No warranty; use at your own discretion. */
+/*  Facebook Rocket‑Launcher – front‑end logic
+    ===============================================================
+    © 2025 – MIT‑licensed sample code.  No warranty; use at your own
+    discretion and be sure to review OAuth / Graph API limits, etc.
+*/
 
 window.addEventListener('DOMContentLoaded', function () {
 
   /*━━━━━━━━━━━━━━━━━━ 1. Tiny helpers ━━━━━━━━━━━━━━━━━━*/
   const $ = sel => document.querySelector(sel);
 
+  // Show / hide secret inputs (Google key & FB token)
+  $('#toggleToken')    ?.addEventListener('click', () => toggleSecret('#accessToken',  '#eyeIcon'));
+  $('#toggleGoogleKey')?.addEventListener('click', () => toggleSecret('#googleApiKey', '#googleEyeIcon'));
+
   function toggleSecret(inputSel, iconSel) {
-    const inp = $(inputSel), ico = $(iconSel);
+    const inp = $(inputSel);
+    const ico = $(iconSel);
     if (!inp || !ico) return;
     if (inp.type === 'password') { inp.type = 'text';  ico.textContent = '🙈'; }
     else                         { inp.type = 'password'; ico.textContent = '👁️'; }
   }
 
-  $('#toggleToken')    ?.addEventListener('click', () => toggleSecret('#accessToken',  '#eyeIcon'));
-  $('#toggleGoogleKey')?.addEventListener('click', () => toggleSecret('#googleApiKey','#googleEyeIcon'));
-
+  /** Read a `fetch` Response safely as JSON or throw the raw text. */
   async function safeJson(resp) {
     const raw = await resp.text();
     try { return JSON.parse(raw); }
     catch { throw new Error(raw || resp.statusText); }
   }
 
-  /*━━━━━━━━━━━━━━━━━━ 2. Upload-log helpers ━━━━━━━━━━━━*/
-  const rowMap  = Object.create(null);
-  let doneCount = 0, fileCount = 0;
+  /*━━━━━━━━━━━━━━━━━━ 2. Upload‑log helpers ━━━━━━━━━━━━*/
+  const rowMap   = Object.create(null);   // filename → <tr>
+  let doneCount  = 0;
 
   function makeRow(filename, status = 'Queued') {
     const tr = document.createElement('tr');
@@ -35,7 +41,7 @@ window.addEventListener('DOMContentLoaded', function () {
         <div class="bar"><div class="fill" style="width:0"></div></div>
         <span class="txt">${status}</span>
       </td>`;
-    document.querySelector('.log-table tbody').appendChild(tr);
+    document.querySelector('.log-table tbody')?.appendChild(tr);
     rowMap[filename] = tr;
   }
 
@@ -45,7 +51,7 @@ window.addEventListener('DOMContentLoaded', function () {
     tr.querySelector('.txt').textContent  = txt;
   }
 
-  /*━━━━━━━━━━━━━━━━━━ 3. Campaign template data ━━━━━━━━━━━━━━━━━━*/
+  /*━━━━━━━━━━━━━━━━━━ 3. Campaign template data ━━━━━━━*/
   const headers = [
     "Campaign ID","Campaign Name","Campaign Status","Campaign Objective","Buying Type",
     "Campaign Start Time","New Objective","Buy With Prime Type","Is Budget Scheduling Enabled For Campaign",
@@ -63,22 +69,19 @@ window.addEventListener('DOMContentLoaded', function () {
   ];
 
   const placeholderRow = [
-    null,
-    "Campaign #1","PAUSED","Outcome Leads","AUCTION",
-    "06/17/2025 1:09:54 pm","Yes","NONE","No","[]","NONE",null,
-    "ACTIVE",0,"Adset #1","06/17/2025 1:09:54 pm",15,
-    "UNDEFINED",0,"No","No","[]",null,null,"LEAD",
-    "https://putyourlinkhere.com","US","home, recent",18,40,
+    null,"Campaign #1","PAUSED","Outcome Leads","AUCTION","06/17/2025 1:09:54 pm","Yes","NONE",
+    "No","[]","NONE",null,"ACTIVE",0,"Adset #1",
+    "06/17/2025 1:09:54 pm",15,"UNDEFINED",0,"No","No","[]",null,null,"LEAD",
+    "https://putyourlinkhere.com",
+    "US","home, recent",18,40,
     "FACEBOOK_RELAXED, AN_RELAXED","OFFSITE_CONVERSIONS",
-    '[{"event_type":"CLICK_THROUGH","window_days":7},' +
-      '{"event_type":"VIEW_THROUGH","window_days":1},' +
-      '{"event_type":"ENGAGED_VIDEO_VIEW","window_days":1}]',
+    '[{"event_type":"CLICK_THROUGH","window_days":7},{"event_type":"VIEW_THROUGH","window_days":1},{"event_type":"ENGAGED_VIDEO_VIEW","window_days":1}]',
     "IMPRESSIONS","Highest volume or value",null,"ACTIVE",null,null,
-    "Ad Name #1","Headline","Ad Copy","Yes",null,null,
-    "untitled","Video Page Post Ad","", "",null,"LEARN_MORE","[]",
-    "No",null,"No","USER_ENROLLED_NON_DCO","TEXT_LIQUIDITY"
+    "Ad Name #1","Headline","Ad Copy","Yes",
+    null,null,"untitled","Video Page Post Ad","", "",null,"LEARN_MORE","[]","No",null,"No","USER_ENROLLED_NON_DCO","TEXT_LIQUIDITY"
   ];
 
+  /* Column indices we’ll re‑use a lot */
   const idxCampaignName = headers.indexOf("Campaign Name");
   const idxAdSetName    = headers.indexOf("Ad Set Name");
   const idxAdName       = headers.indexOf("Ad Name");
@@ -87,227 +90,223 @@ window.addEventListener('DOMContentLoaded', function () {
   const idxBody         = headers.indexOf("Body");
   const idxTitle        = headers.indexOf("Title");
   const idxLink         = headers.indexOf("Link");
-  const stripExt        = name => name.replace(/\.[^.]+$/, '');
 
-  // Prefill preview fields
-  $('#bodyField').value         = placeholderRow[idxBody]  || '';
-  $('#titleField').value        = placeholderRow[idxTitle] || '';
-  $('#linkField').value         = placeholderRow[idxLink]  || '';
-  $('#campaignNameField').value = placeholderRow[idxCampaignName] || '';
+  const stripExt = name => name.replace(/\.[^.]+$/, '');
 
-  /*━━━━━━━━━━━━━━━━━━ 4. Campaign structure picker ━━━━━━━━━━━━━━━━━━*/
-  function renderStructurePicker(count=1) {
+  /* Prefill textboxes so the user sees something */
+  $('#bodyField').value         = placeholderRow[idxBody]  ?? '';
+  $('#titleField').value        = placeholderRow[idxTitle] ?? '';
+  $('#linkField').value         = placeholderRow[idxLink]  ?? '';
+  $('#campaignNameField').value = placeholderRow[idxCampaignName] ?? '';
+
+  /*━━━━━━━━━━━━━━━━━━ 4. Campaign structure picker ━━━━*/
+  function renderStructurePicker(videoCount = 10) {
     const el = $('#structurePicker');
     el.innerHTML = `
       <div class="structure-picker">
-        <label><input type="radio" name="structure" value="one-adset" checked>
-          1 Ad Set, multiple ads
-        </label>
-        <label><input type="radio" name="structure" value="abo-1to1">
-          ABO 1:1 (1 Ad Set per Ad)
-        </label>
-        <label>
-          <input type="radio" name="structure" value="custom">
-          Custom:
-          <input type="number" id="adsetNumInput" min="1" max="${count}"
-                 value="2" disabled> Ad Sets
-        </label>
+        <div class="structure-title">Campaign Structure</div>
+        <div class="structure-choice">
+          <input type="radio" name="structure" id="oneAdset" value="one-adset" checked>
+          <label for="oneAdset">1 Ad Set, multiple ads (all videos under <b>Adset #1</b>)</label>
+        </div>
+        <div class="structure-choice">
+          <input type="radio" name="structure" id="abo1to1" value="abo-1to1">
+          <label for="abo1to1">1 Ad Set per 1 Ad (ABO 1:1)</label>
+        </div>
+        <div class="structure-choice">
+          <input type="radio" name="structure" id="customABO" value="custom">
+          <label for="customABO">Custom:
+            <input type="number" id="adsetNumInput"
+                   class="adset-num-input" min="1" max="${videoCount}" value="2">
+            ad sets (max ${videoCount})
+          </label>
+        </div>
       </div>`;
-    const numIn = $('#adsetNumInput');
-    document.querySelectorAll('input[name="structure"]').forEach(r => {
-      r.addEventListener('change', () => numIn.disabled = r.value!=='custom');
-    });
-    numIn.addEventListener('input', () => {
-      let v = parseInt(numIn.value||'1',10);
-      v = Math.max(1, Math.min(count, v));
-      numIn.value = v;
+    const numInput = $('#adsetNumInput');
+    numInput.disabled = true;
+    document.querySelectorAll('input[name="structure"]').forEach(r =>
+      r.addEventListener('change', () => { numInput.disabled = r.value !== 'custom'; })
+    );
+    numInput.addEventListener('input', () => {
+      const v = Math.max(1, Math.min(videoCount, parseInt(numInput.value || '1', 10)));
+      numInput.value = v;
     });
   }
   renderStructurePicker();
 
-  /*━━━━━━━━━━━━━━━━━━ 5. XLSX preview pane ━━━━━━━━━━━━━━━━━━*/
-  let rows = [ placeholderRow.slice() ], globalData = [];
+  /*━━━━━━━━━━━━━━━━━━ 5. XLSX preview pane ━━━━━━━━━━━*/
+  let rows        = [ placeholderRow.slice() ];
+  let globalData  = [];
+
   function populatePreview() {
     const cont = $('#previewContainer');
     cont.innerHTML = '';
     const wrap = document.createElement('div');
     wrap.className = 'form-container';
-    headers.forEach((h,i) => {
-      const lab = document.createElement('label'),
-            inp = document.createElement('input');
-      lab.textContent = h;
-      inp.readOnly = true;
-      inp.value = rows[0][i] || '';
-      wrap.appendChild(lab);
-      wrap.appendChild(inp);
+    headers.forEach((h, i) => {
+      const lab = document.createElement('label'); lab.textContent = h;
+      const inp = document.createElement('input'); inp.readOnly = true;
+      inp.value = rows[0][i] ?? '';
+      wrap.appendChild(lab);  wrap.appendChild(inp);
     });
     cont.appendChild(wrap);
   }
   populatePreview();
 
-  /*━━━━━━━━━━━━━━━━━━ 6. “Load All Uploaded” button ━━━━━━━━━━━━━━━━━━*/
+  /*━━━━━━━━━━━━━━━━━━ 6. “Load All Uploaded” button ━━*/
   $('#loadBtn').addEventListener('click', async () => {
     try {
-      const r = await fetch('latest_fb_ids.json?ts='+Date.now());
-      if (!r.ok) throw new Error('Cannot load latest_fb_ids.json');
+      const r = await fetch('latest_fb_ids.json?ts=' + Date.now());
+      if (!r.ok) throw new Error('latest_fb_ids.json not found');
       const data = await r.json();
-      if (!Array.isArray(data)||!data.length) throw new Error('Empty JSON');
+      if (!Array.isArray(data) || data.length === 0) throw new Error('JSON must be a non‑empty array');
+
       globalData = data;
-      rows = data.map(({filename,video_id}) => {
-        const r = placeholderRow.slice();
-        r[idxVideoID]     = video_id;
-        r[idxVideoFile]   = filename;
-        r[idxCampaignName]= $('#campaignNameField').value.trim() || r[idxCampaignName];
-        r[idxAdName]      = stripExt(filename);
-        return r;
+      rows = [];
+      const campNameInput = $('#campaignNameField').value.trim();
+
+      data.forEach(({ filename, video_id }) => {
+        const r  = placeholderRow.slice();
+        r[idxVideoID]      = video_id;
+        r[idxVideoFile]    = filename;
+        r[idxCampaignName] = campNameInput || r[idxCampaignName];
+        r[idxAdName]       = stripExt(filename);
+        rows.push(r);
       });
-      renderStructurePicker(rows.length);
+
+      renderStructurePicker(data.length);
       populatePreview();
-      alert(`Loaded ${rows.length} video${rows.length>1?'s':''}.`);
-    } catch (e) {
-      alert(e.message);
-    }
+      alert(`Loaded ${rows.length} video${rows.length > 1 ? 's' : ''}.`);
+    } catch (err) { alert(err.message); }
   });
 
-  /*━━━━━━━━━━━━━━━━━━ 7. Download XLSX button ━━━━━━━━━━━━━━━━━━*/
+  /*━━━━━━━━━━━━━━━━━━ 7. Download XLSX button ━━━━━━━━*/
   $('#downloadBtn').addEventListener('click', () => {
     if (!globalData.length) { alert('Load video IDs first.'); return; }
+
     const structure = document.querySelector('input[name="structure"]:checked').value;
-    let finalRows = [];
+    let finalRows   = [];
+
     if (structure === 'one-adset') {
       finalRows = rows;
     } else if (structure === 'abo-1to1') {
-      finalRows = rows.map((r,i) => {
+      finalRows = rows.map((r, i) => {
         const cp = r.slice();
-        cp[idxAdSetName] = `Adset #${i+1}`;
+        cp[idxAdSetName] = `Adset #${i + 1}`;
         return cp;
       });
-    } else {
-      const n = parseInt($('#adsetNumInput').value,10) || 1;
-      finalRows = rows.map((r,i) => {
+    } else {                       // custom n ad sets
+      const n = parseInt($('#adsetNumInput').value, 10) || 1;
+      finalRows = rows.map((r, i) => {
         const cp = r.slice();
-        cp[idxAdSetName] = `Adset #${(i % n)+1}`;
+        cp[idxAdSetName] = `Adset #${(i % n) + 1}`;
         return cp;
       });
     }
+
+    /* Build workbook & download */
     const wb = XLSX.utils.book_new();
     const ws = XLSX.utils.aoa_to_sheet([headers, ...finalRows]);
     XLSX.utils.book_append_sheet(wb, ws, 'Sheet1');
     XLSX.writeFile(wb, 'facebook_campaign.xlsx');
   });
 
-  /*━━━━━━━━━━━━━━━━━━ 8. Upload workflow ━━━━━━━━━━━━━━━━━━*/
+  /*━━━━━━━━━━━━━━━━━━ 8. Upload workflow ━━━━━━━━━━━━*/
   $('#uploadForm').addEventListener('submit', async e => {
     e.preventDefault();
 
     const folderId     = $('#folderId').value.trim();
-    const googleApiKey = $('#googleApiKey').value.trim();
     const accessToken  = $('#accessToken').value.trim();
     const accountId    = $('#accountId').value.trim();
+    const googleApiKey = $('#googleApiKey').value.trim();
     const uploadBtn    = $('#uploadBtn');
     const logDiv       = $('#uploadLogContainer');
 
     uploadBtn.disabled = true;
     logDiv.innerHTML   = '';
 
-    // 8-A Count
+    /* 8‑A  Count files first */
+    let fileCount = 0;
     try {
-      const res = await fetch('upload.php', {
-        method:  'POST',
+      const r  = await fetch('upload.php', {
+        method : 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ folderId, googleApiKey, accessToken, accountId, count:true })
+        body   : JSON.stringify({ folderId, accessToken, accountId, googleApiKey, count: true })
       });
-      if (!res.ok) throw new Error(await res.text());
-      fileCount = +(await safeJson(res)).count;
+      if (!r.ok) throw new Error(await r.text());
+      const js = await safeJson(r);
+      fileCount = +js.count || 0;
     } catch (err) {
       logDiv.textContent = 'Count failed: ' + err.message;
       uploadBtn.disabled = false;
       return;
     }
 
-    // 8-B Draw table
+    /* 8‑B  Draw table skeleton */
     logDiv.innerHTML = '<b>Upload Log:</b>';
     logDiv.insertAdjacentHTML('beforeend', `
       <table class="log-table">
-        <thead><tr><th>Filename</th><th>Video ID</th><th>Status</th></tr></thead>
+        <thead><tr><th>Filename</th><th>Video ID</th><th>Status</th></tr></thead>
         <tbody></tbody>
       </table>`);
 
-    // 8-C Start job
+    /* 8‑C  Kick off job */
     let jobId;
     try {
-      const res = await fetch('upload.php', {
-        method:  'POST',
+      const r = await fetch('upload.php', {
+        method : 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ folderId, googleApiKey, accessToken, accountId })
+        body   : JSON.stringify({ folderId, accessToken, accountId, googleApiKey })
       });
-      if (!res.ok) throw new Error(await res.text());
-      jobId = (await safeJson(res)).jobId;
+      if (!r.ok) throw new Error(await r.text());
+      const js = await safeJson(r);
+      jobId = js.jobId;
     } catch (err) {
       logDiv.textContent = 'Could not start upload: ' + err.message;
       uploadBtn.disabled = false;
       return;
     }
 
-    // 8-D Polling for progress
-    let lastSize = 0;
-    const poller = setInterval(pollProgress, 1000);
+    /* 8‑D   Live progress via Server‑Sent Events */
+    let lastBeat = Date.now();
+    const es = new EventSource(`progress.php?jobId=${encodeURIComponent(jobId)}`);
 
-    async function pollProgress() {
-      try {
-        const res  = await fetch(`progress.php?jobId=${encodeURIComponent(jobId)}`);
-        if (!res.ok) throw new Error('Progress fetch failed');
-        const text = await res.text();
-        const lines = text.trim().split('\n').filter(l => l
-          .trim().startsWith('{'));
+    es.onmessage = ev => {
+      lastBeat = Date.now();
+      const m = JSON.parse(ev.data);
 
-        for (let i = lastSize; i < lines.length; i++) {
-          const m = JSON.parse(lines[i]);
-          console.log('Poll got:', m);
-          handleProgressMessage(m);
-        }
-        lastSize = lines.length;
-
-      } catch (err) {
-        console.error('Poll error:', err);
-        clearInterval(poller);
-        logDiv.insertAdjacentHTML('beforeend','<div class="error">Polling stopped.</div>');
-        uploadBtn.disabled = false;
-      }
-    }
-
-    function handleProgressMessage(m) {
-      // init
       if (m.init) {
         m.files.forEach(fn => makeRow(fn));
         return;
       }
-      // skip
-      if (m.phase === 'skip') {
-        const tr = rowMap[m.filename];
-        if (tr) updateBar(tr, 100, 'Skipped ⚠️');
-        return;
-      }
-      // download / upload
       if (m.phase === 'download' || m.phase === 'upload') {
-        const verb = m.phase==='download' ? 'Downloading' : 'Uploading';
-        updateBar(rowMap[m.filename], m.pct, `${verb} – ${m.pct}%`);
+        const verb = m.phase === 'download' ? 'Downloading' : 'Uploading';
+        updateBar(rowMap[m.filename], m.pct, `${verb} – ${m.pct}%`);
         return;
       }
-      // done
       if (m.phase === 'done') {
-        const ok = m.status==='success';
+        const ok = m.status === 'success';
         const tr = rowMap[m.filename];
         if (tr) tr.querySelector('.vidId').textContent = m.video_id || '';
-        updateBar(tr, 100, ok ? 'Uploaded ✅' : 'Failed ❌');
+        updateBar(tr, 100, ok ? 'Uploaded ✅' : 'Failed ❌');
         doneCount++;
-        if (doneCount === fileCount) {
-          clearInterval(poller);
-          uploadBtn.disabled = false;
-        }
+        if (doneCount === fileCount) uploadBtn.disabled = false;
       }
-    }
+    };
 
+    es.onerror = () => {
+      es.close();
+      logDiv.insertAdjacentHTML('beforeend', '<div class="error">Connection lost.</div>');
+      uploadBtn.disabled = false;
+    };
+
+    /* 8‑E  Heartbeat counter so the UI feels alive */
+    setInterval(() => {
+      const ago = Math.round((Date.now() - lastBeat) / 1000);
+      logDiv.querySelector('.heartbeat')?.remove();
+      logDiv.insertAdjacentHTML('beforeend',
+        `<div class="heartbeat">Last activity ${ago}s ago</div>`);
+    }, 1000);
   });
 
 });
