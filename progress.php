@@ -1,56 +1,47 @@
 <?php
+/**
+ *  progress.php – Server‑Sent Events stream
+ *  ----------------------------------------
+ *  Client opens:  progress.php?jobId=...
+ *  Worker (worker.php) writes progress lines to jobs/<jobId>.progress
+ */
 declare(strict_types=1);
+set_time_limit(0);
 
-// SSE headers
 header('Content-Type: text/event-stream');
 header('Cache-Control: no-cache');
 header('Connection: keep-alive');
 
-// Validate
-if (empty($_GET['jobId'])) {
-    echo "event: error\n";
-    echo "data: {\"error\":\"Missing jobId\"}\n\n";
-    exit;
+$jobId = $_GET['jobId'] ?? '';
+if (!$jobId) { echo "data: ".json_encode(['error'=>'Missing jobId'])."\n\n"; exit; }
+
+$jobDir   = __DIR__.'/jobs';
+$metaFile = "$jobDir/$jobId.json";
+if (!is_file($metaFile)) {
+    echo "data: ".json_encode(['error'=>'Unknown job'])."\n\n";  exit;
 }
-$jobId = preg_replace('/[^a-z0-9]/i','',$_GET['jobId']);
-$temp  = sys_get_temp_dir();
-$prefix = "{$temp}/progress_{$jobId}_";
 
-// Track whether we’ve sent the init list
-$sentInit = false;
+/* 1. Send initial file list */
+$meta  = json_decode(file_get_contents($metaFile), true);
+$names = array_column($meta['files'], 'name');
+echo "data: ".json_encode(['init'=>true, 'files'=>$names])."\n\n";
+@ob_flush(); @flush();
 
-// Loop until worker is done
+/* 2. Stream incremental updates */
+$progressFile = "$jobDir/$jobId.progress";
+$fp = fopen($progressFile, 'c+');               // create if not existing
+fseek($fp, 0, SEEK_END);                       // follow tail
+
 while (true) {
-    clearstatcache();
-
-    // 1) Send the “init” list exactly once
-    if (!$sentInit) {
-        $initFile = "{$prefix}init.json";
-        if (file_exists($initFile)) {
-            $data = json_decode(file_get_contents($initFile), true);
-            echo "data: ".json_encode($data)."\n\n";
-            $sentInit = true;
-        }
-    }
-
-    // 2) Emit any per-file crumbs
-    foreach (glob("{$prefix}*.json") as $file) {
-        if (basename($file) === "progress_{$jobId}_init.json") {
-            // already handled
-            continue;
-        }
-        $json = file_get_contents($file);
-        echo "data: {$json}\n\n";
-        // remove it so we don’t resend
-        @unlink($file);
-    }
-
-    // 3) If init was sent and no more crumbs remain, we’re done
-    if ($sentInit && !glob("{$prefix}*.json")) {
+    $line = fgets($fp);
+    if ($line !== false) {
+        echo 'data: '.$line."\n\n";
+        @ob_flush(); @flush();
+    } elseif (is_file("$jobDir/$jobId.done")) {   // worker signals finish
+        echo "event: done\ndata: {}\n\n";
+        @ob_flush(); @flush();
         break;
+    } else {
+        sleep(1);
     }
-
-    // flush to client & sleep
-    @ob_flush(); @flush();
-    usleep(200000);  // 0.2s
 }
