@@ -131,7 +131,7 @@ window.addEventListener('DOMContentLoaded', function() {
   populatePreview();
 
   // Load videos button (unchanged)
-  document.getElementById('loadBtn').addEventListener('click', async ()=> {
+  document.getElementById('loadBtn').addEventListener('click', async () => {
     try {
       const r = await fetch('latest_fb_ids.json?t='+Date.now());
       if (!r.ok) throw new Error('latest_fb_ids.json not found');
@@ -151,13 +151,13 @@ window.addEventListener('DOMContentLoaded', function() {
       });
       populatePreview();
       alert('Loaded '+rows.length+' video'+(rows.length>1?'s':'')+'!');
-    } catch(e){
+    } catch (e) {
       alert(e.message);
     }
   });
 
   // Download Excel button (unchanged)
-  document.getElementById('downloadBtn').addEventListener('click', ()=> {
+  document.getElementById('downloadBtn').addEventListener('click', () => {
     if (!globalData.length) {
       alert("Load video IDs first.");
       return;
@@ -166,14 +166,19 @@ window.addEventListener('DOMContentLoaded', function() {
   });
 
   // Toggle token visibility (unchanged)
-  document.getElementById('toggleToken').addEventListener('click', ()=> {
+  document.getElementById('toggleToken').addEventListener('click', () => {
     const input = document.getElementById('accessToken');
     const eye   = document.getElementById('eyeIcon');
-    if (input.type === "password") { input.type = "text"; eye.textContent = "🙈"; }
-    else                           { input.type = "password"; eye.textContent = "👁️"; }
+    if (input.type === "password") {
+      input.type = "text";
+      eye.textContent = "🙈";
+    } else {
+      input.type = "password";
+      eye.textContent = "👁️";
+    }
   });
 
-  // ─── NEW: two‐step count + background‐worker upload with SSE ───
+  // ─── NEW: two-step count + background-worker upload with SSE ───
   document.getElementById('uploadForm').addEventListener('submit', async function(e) {
     e.preventDefault();
 
@@ -189,19 +194,20 @@ window.addEventListener('DOMContentLoaded', function() {
     uploadLogDiv.innerHTML = '';
 
     // 1) Count files BEFORE uploading
-let fileCount = 0;
-try {
-  const respCount = await fetch('upload.php', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ folderId, accessToken, accountId, googleApiKey, count: true })
-  });
-  const info = await respCount.json();
-  fileCount = info.count || 0;
-} catch (err) {
-  fileCount = 0;
-}
-
+    let fileCount = 0;
+    try {
+      const respCount = await fetch('upload.php', {
+        method: 'POST',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({
+          folderId, accessToken, accountId, googleApiKey, count: true
+        })
+      });
+      const info = await respCount.json();
+      fileCount = info.count || 0;
+    } catch (err) {
+      fileCount = 0;
+    }
 
     // 2) Build the log table skeleton
     uploadLogDiv.innerHTML = `<b>Upload Log:</b>`;
@@ -244,8 +250,8 @@ try {
     try {
       const respJob = await fetch('upload.php', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ folderId, accessToken, accountId, googleApiKey })
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({folderId, accessToken, accountId, googleApiKey})
       });
       const j = await respJob.json();
       jobId = j.jobId;
