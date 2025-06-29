@@ -25,7 +25,7 @@ window.addEventListener('DOMContentLoaded', function() {
   }
 
 
-  // ─── Your existing header/placeholder logic ───
+  // ─── Header/placeholder logic ───
   const headers = [
     "Campaign ID","Campaign Name","Campaign Status","Campaign Objective","Buying Type",
     "Campaign Start Time","New Objective","Buy With Prime Type","Is Budget Scheduling Enabled For Campaign",
@@ -51,7 +51,7 @@ window.addEventListener('DOMContentLoaded', function() {
     '[{"event_type":"CLICK_THROUGH","window_days":7},{"event_type":"VIEW_THROUGH","window_days":1},{"event_type":"ENGAGED_VIDEO_VIEW","window_days":1}]',
     "IMPRESSIONS","Highest volume or value",null,"ACTIVE",null,null,
     "Ad Name #1","Headline","Ad Copy","Yes",
-    null,null,"untitled","Video Page Post Ad", "", "", null,"LEARN_MORE","[]","No",null,"No","USER_ENROLLED_NON_DCO","TEXT_LIQUIDITY"
+    null,null,"untitled","Video Page Post Ad","", "",null,"LEARN_MORE","[]","No",null,"No","USER_ENROLLED_NON_DCO","TEXT_LIQUIDITY"
   ];
 
   const idxCampaignName = headers.indexOf("Campaign Name");
@@ -63,15 +63,17 @@ window.addEventListener('DOMContentLoaded', function() {
   const idxTitle        = headers.indexOf("Title");
   const idxLink         = headers.indexOf("Link");
 
-  function stripExt(name){ return name.replace(/\.[^.]+$/,''); }
+  function stripExt(name) {
+    return name.replace(/\.[^.]+$/, '');
+  }
 
-  // Prefill the form fields
+  // Prefill form fields
   document.getElementById('bodyField').value         = placeholderRow[idxBody] || "";
   document.getElementById('titleField').value        = placeholderRow[idxTitle] || "";
   document.getElementById('linkField').value         = placeholderRow[idxLink] || "";
   document.getElementById('campaignNameField').value = placeholderRow[idxCampaignName] || "";
 
-  // Structure picker (unchanged)
+  // ─── Structure picker ───
   function renderStructurePicker(videoCount) {
     const el = document.getElementById('structurePicker');
     el.style.display = "";
@@ -88,84 +90,96 @@ window.addEventListener('DOMContentLoaded', function() {
         </div>
         <div class="structure-choice">
           <input type="radio" name="structure" id="customABO" value="custom">
-          <label for="customABO">Custom: <span>Divide creatives into </span>
-            <input type="number" min="1" max="${videoCount||10}" id="adsetNumInput" class="adset-num-input" value="2"> ad sets (max: ${videoCount||10})
+          <label for="customABO">Custom:
+            <input type="number" min="1" max="${videoCount||10}"
+                   id="adsetNumInput" class="adset-num-input" value="2">
+            ad sets (max ${videoCount||10})
           </label>
         </div>
-      </div>
-    `;
+      </div>`;
     document.querySelectorAll('input[name="structure"]').forEach(radio => {
       radio.addEventListener('change', function() {
         document.getElementById('adsetNumInput').disabled = (this.value !== "custom");
       });
     });
     document.getElementById('adsetNumInput').addEventListener('input', function() {
-      let val = Math.max(1, Math.min((videoCount||10), parseInt(this.value) || 1));
+      let val = Math.max(1, Math.min(videoCount||10, parseInt(this.value) || 1));
       this.value = val;
     });
     document.getElementById('adsetNumInput').disabled = true;
   }
   renderStructurePicker(10);
 
-  // Preview population (unchanged)
+  // ─── Preview population ───
   let globalData = [];
-  let rows = [placeholderRow.map(x => x)];
-  function populatePreview(){
+  let rows = [ placeholderRow.slice() ];
+  function populatePreview() {
     const cont = document.getElementById('previewContainer');
     cont.innerHTML = '';
     const c = document.createElement('div');
     c.className = 'form-container';
+
     [idxVideoID, idxVideoFile].forEach(i => {
-      const lab = document.createElement('label'); lab.textContent = headers[i];
-      const inp = document.createElement('input'); inp.readOnly = true; inp.value = rows[0][i] ?? "";
-      c.appendChild(lab); c.appendChild(inp);
+      const lab = document.createElement('label');
+      lab.textContent = headers[i];
+      const inp = document.createElement('input');
+      inp.readOnly = true;
+      inp.value = rows[0][i] || '';
+      c.appendChild(lab);
+      c.appendChild(inp);
     });
-    headers.forEach((h, i) => {
-      if (i === idxVideoID || i === idxVideoFile) return;
-      const lab = document.createElement('label'); lab.textContent = h;
-      const inp = document.createElement('input'); inp.readOnly = true; inp.value = rows[0][i] ?? "";
-      c.appendChild(lab); c.appendChild(inp);
+
+    headers.forEach((h,i) => {
+      if (i===idxVideoID||i===idxVideoFile) return;
+      const lab = document.createElement('label');
+      lab.textContent = h;
+      const inp = document.createElement('input');
+      inp.readOnly = true;
+      inp.value = rows[0][i] || '';
+      c.appendChild(lab);
+      c.appendChild(inp);
     });
+
     cont.appendChild(c);
   }
   populatePreview();
 
-  // Load videos button (unchanged)
+  // ─── Load videos button ───
   document.getElementById('loadBtn').addEventListener('click', async () => {
     try {
       const r = await fetch('latest_fb_ids.json?t='+Date.now());
       if (!r.ok) throw new Error('latest_fb_ids.json not found');
       const data = await r.json();
-      if (!Array.isArray(data) || data.length === 0) throw new Error('JSON must be an array');
+      if (!Array.isArray(data) || data.length<1) throw new Error('JSON must be a non-empty array');
       globalData = data;
       renderStructurePicker(data.length);
       rows = [];
       const campaignNameVal = document.getElementById('campaignNameField').value.trim();
       data.forEach(({filename, video_id}) => {
-        const newRow = placeholderRow.map(x => x);
-        newRow[idxVideoID]   = video_id;
-        newRow[idxVideoFile] = filename;
-        if (idxCampaignName !== -1 && campaignNameVal) newRow[idxCampaignName] = campaignNameVal;
-        if (idxAdName !== -1) newRow[idxAdName] = stripExt(filename);
-        rows.push(newRow);
+        const nr = placeholderRow.slice();
+        nr[idxVideoID]   = video_id;
+        nr[idxVideoFile] = filename;
+        if (idxCampaignName>=0 && campaignNameVal) nr[idxCampaignName] = campaignNameVal;
+        if (idxAdName>=0) nr[idxAdName] = stripExt(filename);
+        rows.push(nr);
       });
       populatePreview();
-      alert('Loaded '+rows.length+' video'+(rows.length>1?'s':'')+'!');
-    } catch (e) {
-      alert(e.message);
+      alert(`Loaded ${rows.length} video${rows.length>1?'s':''}!`);
+    } catch(err) {
+      alert(err.message);
     }
   });
 
-  // Download Excel button (unchanged)
+  // ─── Download Excel button ───
   document.getElementById('downloadBtn').addEventListener('click', () => {
     if (!globalData.length) {
       alert("Load video IDs first.");
       return;
     }
-    // …your existing XLSX build/write code here…
+    // your existing XLSX build/write code here
   });
 
-  // Toggle token visibility (unchanged)
+  // ─── Toggle token visibility ───
   document.getElementById('toggleToken').addEventListener('click', () => {
     const input = document.getElementById('accessToken');
     const eye   = document.getElementById('eyeIcon');
@@ -178,7 +192,7 @@ window.addEventListener('DOMContentLoaded', function() {
     }
   });
 
-  // ─── NEW: two-step count + background-worker upload with SSE ───
+  // ─── Uploader Logic + Progress UI ───
   document.getElementById('uploadForm').addEventListener('submit', async function(e) {
     e.preventDefault();
 
@@ -189,7 +203,6 @@ window.addEventListener('DOMContentLoaded', function() {
     const uploadBtn    = document.getElementById('uploadBtn');
     const uploadLogDiv = document.getElementById('uploadLogContainer');
 
-    // Disable button + clear old log
     uploadBtn.disabled = true;
     uploadLogDiv.innerHTML = '';
 
@@ -198,7 +211,7 @@ window.addEventListener('DOMContentLoaded', function() {
     try {
       const respCount = await fetch('upload.php', {
         method: 'POST',
-        headers: {'Content-Type':'application/json'},
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           folderId, accessToken, accountId, googleApiKey, count: true
         })
@@ -210,7 +223,7 @@ window.addEventListener('DOMContentLoaded', function() {
     }
 
     // 2) Build the log table skeleton
-    uploadLogDiv.innerHTML = `<b>Upload Log:</b>`;
+    uploadLogDiv.innerHTML = '<b>Upload Log:</b>';
     const table = document.createElement('table');
     table.className = 'log-table';
     const thead = document.createElement('thead');
@@ -226,79 +239,60 @@ window.addEventListener('DOMContentLoaded', function() {
     table.appendChild(tbody);
     uploadLogDiv.appendChild(table);
 
-    // Progress / heartbeat display
-    let progressMsg = document.createElement('div');
-    uploadLogDiv.insertBefore(progressMsg, table);
-
-    let lastHeartbeatTime = Date.now();
-    doneCount = 0;
-    function updateHeartbeatDisplay() {
-      const ago = Math.round((Date.now() - lastHeartbeatTime)/1000);
-      progressMsg.innerHTML =
-        `<span class="spinner"></span>Uploading... (${doneCount}/${fileCount||'?'}) ` +
-        `<span style="color:#888;font-size:.95em;">| Last activity: ${ago}s ago</span>`;
-      if (ago > 15) {
-        progressMsg.innerHTML +=
-          `<br><span style="color:#c00;">No response from server for ${ago}s – backend may be stuck.</span>`;
-      }
-    }
-    updateHeartbeatDisplay();
-    const heartbeatIntervalId = setInterval(updateHeartbeatDisplay, 1000);
-
-    // 3) Kick off the job and retrieve jobId
+    // 3) Kick off job and get jobId
     let jobId;
     try {
       const respJob = await fetch('upload.php', {
         method: 'POST',
-        headers: {'Content-Type':'application/json'},
-        body: JSON.stringify({folderId, accessToken, accountId, googleApiKey})
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ folderId, accessToken, accountId, googleApiKey })
       });
       const j = await respJob.json();
       jobId = j.jobId;
     } catch (err) {
-      clearInterval(heartbeatIntervalId);
-      uploadLogDiv.textContent = `Error starting upload: ${err.message || err}`;
+      uploadLogDiv.textContent = 'Error starting upload: ' + err.message;
       uploadBtn.disabled = false;
       return;
     }
 
-    // 4) Open SSE connection to progress.php
+    // 4) Listen to SSE for progress
+    let lastHeartbeat = Date.now();
+    function heartbeatUI() {
+      const ago = Math.round((Date.now() - lastHeartbeat)/1000);
+      uploadLogDiv.querySelector('table').insertAdjacentHTML('afterend',
+        `<div class="heartbeat">Last activity: ${ago}s ago</div>`
+      );
+    }
+    setInterval(heartbeatUI, 1000);
+
     const es = new EventSource(`progress.php?jobId=${jobId}`);
     es.onmessage = e => {
-      lastHeartbeatTime = Date.now();
+      lastHeartbeat = Date.now();
       const msg = JSON.parse(e.data);
-
       if (msg.init) {
         msg.files.forEach(name => makeRow(name, 'Queued'));
         return;
       }
-      if (msg.phase === 'download' || msg.phase === 'upload') {
-        const pct  = msg.pct;
-        const verb = msg.phase === 'download' ? 'Downloading' : 'Uploading';
+      if (msg.phase==='download' || msg.phase==='upload') {
+        const pct = msg.pct;
+        const verb = (msg.phase==='download') ? 'Downloading' : 'Uploading';
         updateBar(rowMap[msg.filename], pct, `${verb} – ${pct}%`);
         return;
       }
-      if (msg.phase === 'done') {
-        const ok = (msg.status === 'success');
-        updateBar(rowMap[msg.filename], 100, ok ? 'Uploaded ✅' : 'Failed ❌');
+      if (msg.phase==='done') {
+        const ok = msg.status==='success';
+        updateBar(rowMap[msg.filename], 100, ok?'Uploaded ✅':'Failed ❌');
         doneCount++;
-        return;
       }
     };
-
-    es.onerror = err => {
-      console.error('Progress stream error', err);
+    es.onerror = () => {
       es.close();
-      clearInterval(heartbeatIntervalId);
-      uploadLogDiv.insertAdjacentHTML(
-        'beforeend',
-        `<div style="color:#c00; margin-top:8px;">
-           Connection lost. Please refresh to retry.
-         </div>`
+      uploadLogDiv.insertAdjacentHTML('beforeend',
+        '<div class="error">Connection lost.</div>'
       );
       uploadBtn.disabled = false;
     };
 
-  }); // end uploadForm submit
+  }); // end submit listener
 
 }); // end DOMContentLoaded
