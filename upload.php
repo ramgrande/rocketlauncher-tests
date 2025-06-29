@@ -45,7 +45,8 @@ try {
 
     // 4) Fire off worker.php via non-blocking HTTP
     $host = $_SERVER['HTTP_HOST'];
-    $port = $_SERVER['SERVER_PORT'] ?? 80;
+    // <<-- Cast port to int here:
+    $port = intval($_SERVER['SERVER_PORT'] ?? 80);
     $path = dirname($_SERVER['REQUEST_URI']) . "/worker.php?jobId=" . urlencode($jobId);
 
     $fp = @fsockopen($host, $port, $errno, $errstr, 1);
