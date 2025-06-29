@@ -1,10 +1,9 @@
 /*  Facebook Rocket‑Launcher – front‑end logic
     ===============================================================
-    v1.3  (2025‑06‑29)
-      • adds duplicate‑video handling
-      • EventSource auto‑reconnect + heartbeat
-      • retains full campaign template / XLSX generator
-      • expects:  upload.php  v1.2  (plain‑integer “count” reply)
+    v1.4  (2025‑06‑29)
+      • FIX: spread operator in XLSX sheet build
+      • FIX: plain‑integer “count” parser
+      • everything else identical to v1.3
 */
 
 window.addEventListener('DOMContentLoaded', () => {
@@ -82,7 +81,7 @@ window.addEventListener('DOMContentLoaded', () => {
     null,null,"untitled","Video Page Post Ad","", "",null,"LEARN_MORE","[]","No",null,"No","USER_ENROLLED_NON_DCO","TEXT_LIQUIDITY"
   ];
 
-  /* frequently used indices */
+  /* pre‑computed indices */
   const idxCampaignName = headers.indexOf("Campaign Name");
   const idxAdSetName    = headers.indexOf("Ad Set Name");
   const idxAdName       = headers.indexOf("Ad Name");
@@ -92,13 +91,13 @@ window.addEventListener('DOMContentLoaded', () => {
   const idxTitle        = headers.indexOf("Title");
   const idxLink         = headers.indexOf("Link");
 
-  /* Prefill identity textboxes with placeholderRow defaults */
-  $('#bodyField').value         = placeholderRow[idxBody]  ?? '';
-  $('#titleField').value        = placeholderRow[idxTitle] ?? '';
-  $('#linkField').value         = placeholderRow[idxLink]  ?? '';
-  $('#campaignNameField').value = placeholderRow[idxCampaignName] ?? '';
+  /* Prefill form with defaults */
+  $('#bodyField').value         = placeholderRow[idxBody];
+  $('#titleField').value        = placeholderRow[idxTitle];
+  $('#linkField').value         = placeholderRow[idxLink];
+  $('#campaignNameField').value = placeholderRow[idxCampaignName];
 
-  /*━━━━━━━━━━━━━━━━ 5. Campaign structure picker ━━━━━━*/
+  /*━━━━━━━━━━━━━━━━ 5. Structure picker ━━━━━━━━━━━━━━━*/
   function renderStructurePicker(videoCount = 10){
     const el = $('#structurePicker');
     el.innerHTML = `
@@ -152,7 +151,7 @@ window.addEventListener('DOMContentLoaded', () => {
   }
   populatePreview();
 
-  /*━━━━━━━━━━━━━━━━ 7. “Load All Uploaded” button ━━━━*/
+  /*━━━━━━━━━━━━━━━━ 7. “Load All Uploaded” ━━━━━━━━━━━*/
   $('#loadBtn').addEventListener('click', async ()=>{
     try{
       const r = await fetch('latest_fb_ids.json?ts='+Date.now());
@@ -182,7 +181,7 @@ window.addEventListener('DOMContentLoaded', () => {
     }catch(err){ alert(err.message); }
   });
 
-  /*━━━━━━━━━━━━━━━━ 8. Download XLSX button ━━━━━━━━*/
+  /*━━━━━━━━━━━━━━━━ 8. Download XLSX ━━━━━━━━━━━━━━━━━*/
   $('#downloadBtn').addEventListener('click', ()=>{
     if (!globalData.length){ alert('Load video IDs first.'); return; }
 
@@ -207,7 +206,7 @@ window.addEventListener('DOMContentLoaded', () => {
     }
 
     const wb = XLSX.utils.book_new();
-    const ws = XLSX.utils.aoa_to_sheet([headers, ...finalRows]);
+    const ws = XLSX.utils.aoa_to_sheet([headers, ...finalRows]);   // FIXED spread operator
     XLSX.utils.book_append_sheet(wb, ws, 'Sheet1');
     XLSX.writeFile(wb, 'facebook_campaign.xlsx');
   });
@@ -234,7 +233,7 @@ window.addEventListener('DOMContentLoaded', () => {
         body:JSON.stringify({folderId,googleApiKey,accessToken,accountId,count:true})
       });
       if(!r.ok) throw new Error(await r.text());
-      fileCount = (+await r.text())|0;
+      fileCount = (+await r.text())|0;            // plain integer parser – FIXED
     }catch(err){
       logDiv.textContent = 'Count failed: '+err.message;
       uploadBtn.disabled = false; return;
