@@ -6,11 +6,12 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
   <link rel="stylesheet" href="styles.css" />
-  <script src="main.js"></script>
+  <!-- main.js is loaded *defer* so the DOM exists when it runs -->
+  <script src="main.js" defer></script>
 </head>
 <body>
 
-<h1>Facebook Campaign Builder (Uploader + XLSX Export)</h1>
+<h1>Facebook Campaign Builder (Uploader + XLSX Export)</h1>
 
 <section>
   <!-- Ad Identify Box -->
@@ -41,26 +42,30 @@
   <h2>1. Drive → Facebook Video Upload</h2>
   <form id="uploadForm">
     <div class="form-row row-inline">
-      <label for="folderId" style="min-width:172px;">Google Drive Folder ID</label>
-      <input type="text" id="folderId" placeholder="Enter Drive Folder ID" required value="1kGY7SZQIhZF7xgk0byNJrjPuLXbHoUGX" style="flex:1;" />
+      <label for="folderId" style="min-width:172px;">Google Drive Folder ID</label>
+      <input type="text" id="folderId" placeholder="Enter Drive Folder ID" required style="flex:1;" />
     </div>
     <div class="form-row row-inline">
-      <label for="googleApiKey" style="min-width:172px;">Google API Key</label>
+      <label for="googleApiKey" style="min-width:172px;">Google API Key</label>
       <div class="input-wrap" style="flex:1;">
-        <input type="password" id="googleApiKey" autocomplete="off" required value="AIzaSyBWpMe5ur8ZRFDmdqIy8sIM58dBA9Wf_pg" style="width:100%;" />
-        <button class="eye-btn" tabindex="-1" type="button" id="toggleGoogleKey"><span id="googleEyeIcon">&#128065;</span></button>
+        <input type="password" id="googleApiKey" autocomplete="off" required style="width:100%;" />
+        <button class="eye-btn" tabindex="-1" type="button" id="toggleGoogleKey">
+          <span id="googleEyeIcon">&#128065;</span>
+        </button>
       </div>
     </div>
     <div class="form-row row-inline">
-      <label for="accessToken" style="min-width:172px;">Facebook Access Token</label>
+      <label for="accessToken" style="min-width:172px;">Facebook Access Token</label>
       <div class="input-wrap" style="flex:1;">
-        <input type="password" id="accessToken" autocomplete="off" required value="EAAKoZC0nyDKIBO6GJxx7ZCFhMiDiKwFZBdvSjeb15kjA8AfKKb2SSuK8x72x93pZA7DKCbFM7nAKui5vyG55plwjuKaS8om8yjEZB1GlCehl72FkwQAcgrcKJU28kJWdt8Ru4EZCEc6pPV23oEI2ZCkTcfzrMLpkPZAe73nlBYxgoKKC6tdJSV7iKtDJbeeMcXJCR5bmOYMjwdqUbpSCORS7cZB33cIAGIhHLGRzMAZCGG" style="width:100%;" />
-        <button class="eye-btn" tabindex="-1" type="button" id="toggleToken"><span id="eyeIcon">&#128065;</span></button>
+        <input type="password" id="accessToken" autocomplete="off" required style="width:100%;" />
+        <button class="eye-btn" tabindex="-1" type="button" id="toggleToken">
+          <span id="eyeIcon">&#128065;</span>
+        </button>
       </div>
     </div>
     <div class="form-row row-inline">
-      <label for="accountId" style="min-width:172px;">Facebook Ad Account ID</label>
-      <input type="text" id="accountId" placeholder="act_1234567890" required value="act_1428753541372149" style="flex:1;" />
+      <label for="accountId" style="min-width:172px;">Facebook Ad Account ID</label>
+      <input type="text" id="accountId" placeholder="act_1234567890" required style="flex:1;" />
       <button type="submit" id="uploadBtn" style="min-width:140px;">Start Upload</button>
     </div>
   </form>
@@ -69,9 +74,7 @@
 
 <section>
   <h2>2. Generate Campaign XLSX</h2>
-  <p>
-    After upload, select your campaign structure before exporting.
-  </p>
+  <p>After upload, select your campaign structure before exporting.</p>
   <button id="loadBtn">Load video IDs from latest_fb_ids.json</button>
   <button id="downloadBtn">Download XLSX</button>
   <div id="previewContainer"></div>
@@ -81,10 +84,9 @@
 <div id="tokenModal">
   <div class="modal-content">
     <div style="font-size:1.25em;font-weight:700;letter-spacing:-.02em;">Renew Token</div>
-    <div style="margin-top:18px;color:#444;">Your Facebook access token expired or invalid. Please re-paste a valid token and try again.</div>
+    <div style="margin-top:18px;color:#444;">Your Facebook access token expired or invalid. Please re‑paste a valid token and try again.</div>
     <button onclick="document.getElementById('tokenModal').style.display='none';">OK</button>
   </div>
 </div>
 </body>
 </html>
-
