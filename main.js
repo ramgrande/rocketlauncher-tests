@@ -162,22 +162,23 @@ window.addEventListener('DOMContentLoaded', function() {
       return;
     }
     // ... your existing code for building the XLSX ...
-    // (no changes here)
   });
 
   // Toggle token visibility (unchanged)
   document.getElementById('toggleToken').addEventListener('click', ()=> {
     const input = document.getElementById('accessToken');
     const eye   = document.getElementById('eyeIcon');
-    if (input.type === "password") { input.type = "text"; eye.textContent = "🙈"; }
-    else                           { input.type = "password"; eye.textContent = "👁️"; }
+    if (input.type === "password") {
+      input.type = "text"; eye.textContent = "🙈";
+    } else {
+      input.type = "password"; eye.textContent = "👁️";
+    }
   });
 
-  // ─── NEW: Background‐worker upload using SSE ───
+  // ─── NEW: Count + Background‐worker upload using SSE ───
   document.getElementById('uploadForm').addEventListener('submit', async function(e) {
     e.preventDefault();
 
-    // Gather inputs
     const folderId     = document.getElementById('folderId').value.trim();
     const accessToken  = document.getElementById('accessToken').value.trim();
     const accountId    = document.getElementById('accountId').value.trim();
@@ -185,19 +186,43 @@ window.addEventListener('DOMContentLoaded', function() {
     const uploadBtn    = document.getElementById('uploadBtn');
     const uploadLogDiv = document.getElementById('uploadLogContainer');
 
-    // Disable button + clear old log
     uploadBtn.disabled = true;
     uploadLogDiv.innerHTML = '';
 
-    // 1) Kick off the job and retrieve jobId
-    let jobId;
+    // 1) Count files
+    let fileCount = 0;
     try {
       const resp = await fetch('upload.php', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ folderId, accessToken, accountId, googleApiKey })
+        body: JSON.stringify({
+          folderId,
+          accessToken,
+          accountId,
+          googleApiKey,
+          count: true
+        })
       });
-      const json = await resp.json();
+      const info = await resp.json();
+      fileCount = info.count || 0;
+    } catch {
+      fileCount = 0;
+    }
+
+    // 2) Kick off the job and get jobId
+    let jobId;
+    try {
+      const resp2 = await fetch('upload.php', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          folderId,
+          accessToken,
+          accountId,
+          googleApiKey
+        })
+      });
+      const json = await resp2.json();
       jobId = json.jobId;
     } catch (err) {
       uploadLogDiv.textContent = `Error starting upload: ${err.message || err}`;
@@ -205,7 +230,7 @@ window.addEventListener('DOMContentLoaded', function() {
       return;
     }
 
-    // 2) Build the log table skeleton
+    // 3) Build the log table skeleton
     uploadLogDiv.innerHTML = `<b>Upload Log:</b>`;
     const table = document.createElement('table');
     table.className = 'log-table';
@@ -222,26 +247,21 @@ window.addEventListener('DOMContentLoaded', function() {
     table.appendChild(tbody);
     uploadLogDiv.appendChild(table);
 
-    // 3) Open SSE connection to progress.php
+    // 4) Open SSE connection to progress.php
     const es = new EventSource(`progress.php?jobId=${jobId}`);
     es.onmessage = e => {
       const msg = JSON.parse(e.data);
 
-      // init → draw all rows
       if (msg.init) {
         msg.files.forEach(name => makeRow(name, 'Queued'));
         return;
       }
-
-      // download/upload progress → update bar
       if (msg.phase === 'download' || msg.phase === 'upload') {
         const pct  = msg.pct;
         const verb = msg.phase === 'download' ? 'Downloading' : 'Uploading';
         updateBar(rowMap[msg.filename], pct, `${verb} – ${pct}%`);
         return;
       }
-
-      // done → mark success or failure
       if (msg.phase === 'done') {
         const success = (msg.status === 'success');
         const text    = success ? 'Uploaded ✅' : 'Failed ❌';
