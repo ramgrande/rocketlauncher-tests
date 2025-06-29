@@ -237,46 +237,54 @@ window.addEventListener('DOMContentLoaded', function () {
       return;
     }
 
-    // D) SSE progress
-    let lastBeat = Date.now();
-    const es = new EventSource(`progress.php?jobId=${encodeURIComponent(jobId)}`);
-    es.onmessage = ev => {
-      lastBeat = Date.now();
-      const m = JSON.parse(ev.data);
+/* ─── 8-D  Live progress via Server-Sent Events ─────────────────── */
+let lastBeat = Date.now();
+const es = new EventSource(`progress.php?jobId=${encodeURIComponent(jobId)}`);
 
-      // handle skip
-      if (m.phase==='skip') {
-        const tr = rowMap[m.filename];
-        if (tr) {
-          updateBar(tr,100,'Skipped ⚠️');
-          tr.querySelector('.vidId').textContent = '';
-        }
-        return;
-      }
+es.onmessage = ev => {
+  lastBeat = Date.now();
+  const m = JSON.parse(ev.data);
 
-      if (m.init) {
-        m.files.forEach(fn=>makeRow(fn));
-        return;
-      }
-      if (m.phase==='download' || m.phase==='upload') {
-        const verb = m.phase==='download'?'Downloading':'Uploading';
-        updateBar(rowMap[m.filename],m.pct,`${verb} – ${m.pct}%`);
-        return;
-      }
-      if (m.phase==='done') {
-        const ok = m.status==='success';
-        const tr = rowMap[m.filename];
-        if (tr) tr.querySelector('.vidId').textContent = m.video_id||'';
-        updateBar(tr,100, ok?'Uploaded ✅':'Failed ❌');
-        doneCount++;
-        if (doneCount===fileCount) uploadBtn.disabled=false;
-      }
-    };
-    es.onerror = ()=>{
-      es.close();
-      logDiv.insertAdjacentHTML('beforeend','<div class="error">Connection lost.</div>');
-      uploadBtn.disabled=false;
-    };
+  // 1) init: build all the rows
+  if (m.init) {
+    m.files.forEach(fn => makeRow(fn));
+    return;
+  }
+
+  // 2) skip: file was already on FB
+  if (m.phase === 'skip') {
+    const tr = rowMap[m.filename];
+    if (tr) {
+      updateBar(tr, 100, 'Skipped ⚠️');
+      tr.querySelector('.vidId').textContent = '';
+    }
+    return;
+  }
+
+  // 3) download / upload progress
+  if (m.phase === 'download' || m.phase === 'upload') {
+    const verb = m.phase === 'download' ? 'Downloading' : 'Uploading';
+    updateBar(rowMap[m.filename], m.pct, `${verb} – ${m.pct}%`);
+    return;
+  }
+
+  // 4) done: success or error
+  if (m.phase === 'done') {
+    const ok = m.status === 'success';
+    const tr = rowMap[m.filename];
+    if (tr) tr.querySelector('.vidId').textContent = m.video_id || '';
+    updateBar(tr, 100, ok ? 'Uploaded ✅' : 'Failed ❌');
+    doneCount++;
+    if (doneCount === fileCount) uploadBtn.disabled = false;
+  }
+};
+
+es.onerror = () => {
+  es.close();
+  logDiv.insertAdjacentHTML('beforeend', '<div class="error">Connection lost.</div>');
+  uploadBtn.disabled = false;
+};
+
 
     // E) heartbeat
     setInterval(()=>{
