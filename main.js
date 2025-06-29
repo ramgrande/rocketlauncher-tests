@@ -95,7 +95,7 @@ window.addEventListener('DOMContentLoaded', function () {
   $('#linkField').value         = placeholderRow[idxLink]  || '';
   $('#campaignNameField').value = placeholderRow[idxCampaignName] || '';
 
-  /*━━━━━━━━━━━━━━━━━━ 4. Campaign structure picker ━━━━━━━━━━━━*/
+  /*━━━━━━━━━━━━━━━━━━ 4. Campaign structure picker ━━━━━━━━━━━━━━━━━━*/
   function renderStructurePicker(count=1) {
     const el = $('#structurePicker');
     el.innerHTML = `
@@ -125,7 +125,7 @@ window.addEventListener('DOMContentLoaded', function () {
   }
   renderStructurePicker();
 
-  /*━━━━━━━━━━━━━━━━━━ 5. XLSX preview pane ━━━━━━━━━━━━*/
+  /*━━━━━━━━━━━━━━━━━━ 5. XLSX preview pane ━━━━━━━━━━━━━━━━━━*/
   let rows = [ placeholderRow.slice() ], globalData = [];
   function populatePreview() {
     const cont = $('#previewContainer');
@@ -145,7 +145,7 @@ window.addEventListener('DOMContentLoaded', function () {
   }
   populatePreview();
 
-  /*━━━━━━━━━━━━━━━━━━ 6. “Load All Uploaded” button ━━━━━━━━━━━━*/
+  /*━━━━━━━━━━━━━━━━━━ 6. “Load All Uploaded” button ━━━━━━━━━━━━━━━━━━*/
   $('#loadBtn').addEventListener('click', async () => {
     try {
       const r = await fetch('latest_fb_ids.json?ts='+Date.now());
@@ -155,10 +155,10 @@ window.addEventListener('DOMContentLoaded', function () {
       globalData = data;
       rows = data.map(({filename,video_id}) => {
         const r = placeholderRow.slice();
-        r[idxVideoID]   = video_id;
-        r[idxVideoFile] = filename;
-        r[idxCampaignName] = $('#campaignNameField').value.trim() || r[idxCampaignName];
-        r[idxAdName]    = stripExt(filename);
+        r[idxVideoID]     = video_id;
+        r[idxVideoFile]   = filename;
+        r[idxCampaignName]= $('#campaignNameField').value.trim() || r[idxCampaignName];
+        r[idxAdName]      = stripExt(filename);
         return r;
       });
       renderStructurePicker(rows.length);
@@ -169,14 +169,14 @@ window.addEventListener('DOMContentLoaded', function () {
     }
   });
 
-  /*━━━━━━━━━━━━━━━━━━ 7. Download XLSX button ━━━━━━━━━━━━*/
+  /*━━━━━━━━━━━━━━━━━━ 7. Download XLSX button ━━━━━━━━━━━━━━━━━━*/
   $('#downloadBtn').addEventListener('click', () => {
     if (!globalData.length) { alert('Load video IDs first.'); return; }
     const structure = document.querySelector('input[name="structure"]:checked').value;
     let finalRows = [];
-    if (structure==='one-adset') {
+    if (structure === 'one-adset') {
       finalRows = rows;
-    } else if (structure==='abo-1to1') {
+    } else if (structure === 'abo-1to1') {
       finalRows = rows.map((r,i) => {
         const cp = r.slice();
         cp[idxAdSetName] = `Adset #${i+1}`;
@@ -196,7 +196,7 @@ window.addEventListener('DOMContentLoaded', function () {
     XLSX.writeFile(wb, 'facebook_campaign.xlsx');
   });
 
-  /*━━━━━━━━━━━━━━━━━━ 8. Upload workflow ━━━━━━━━━━━━*/
+  /*━━━━━━━━━━━━━━━━━━ 8. Upload workflow ━━━━━━━━━━━━━━━━━━*/
   $('#uploadForm').addEventListener('submit', async e => {
     e.preventDefault();
 
@@ -249,8 +249,7 @@ window.addEventListener('DOMContentLoaded', function () {
       return;
     }
 
-    // 8-D Polling for progress push test
-  
+    // 8-D Polling for progress
     let lastSize = 0;
     const poller = setInterval(pollProgress, 1000);
 
@@ -259,10 +258,13 @@ window.addEventListener('DOMContentLoaded', function () {
         const res  = await fetch(`progress.php?jobId=${encodeURIComponent(jobId)}`);
         if (!res.ok) throw new Error('Progress fetch failed');
         const text = await res.text();
-        const lines = text.trim().split('\n').filter(l => l.trim().startsWith('{'));
+        const lines = text.trim().split('\n').filter(l => l
+          .trim().startsWith('{'));
 
         for (let i = lastSize; i < lines.length; i++) {
-          handleProgressMessage(JSON.parse(lines[i]));
+          const m = JSON.parse(lines[i]);
+          console.log('Poll got:', m);
+          handleProgressMessage(m);
         }
         lastSize = lines.length;
 
@@ -275,16 +277,24 @@ window.addEventListener('DOMContentLoaded', function () {
     }
 
     function handleProgressMessage(m) {
+      // init
+      if (m.init) {
+        m.files.forEach(fn => makeRow(fn));
+        return;
+      }
+      // skip
       if (m.phase === 'skip') {
         const tr = rowMap[m.filename];
         if (tr) updateBar(tr, 100, 'Skipped ⚠️');
         return;
       }
+      // download / upload
       if (m.phase === 'download' || m.phase === 'upload') {
         const verb = m.phase==='download' ? 'Downloading' : 'Uploading';
         updateBar(rowMap[m.filename], m.pct, `${verb} – ${m.pct}%`);
         return;
       }
+      // done
       if (m.phase === 'done') {
         const ok = m.status==='success';
         const tr = rowMap[m.filename];
