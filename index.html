@@ -6,7 +6,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
   <link rel="stylesheet" href="styles.css" />
-  <script src="main.js" defer></script>
+  <script src="main.js"></script>
 </head>
 <body>
 
@@ -70,6 +70,7 @@
 <section>
   <h2>2. Generate Campaign XLSX</h2>
   <p>
+    This uses <code>template.xlsx</code> (must live next to this file) and your <code>latest_fb_ids.json</code>.<br>
     After upload, select your campaign structure before exporting.
   </p>
   <button id="loadBtn">Load video IDs from latest_fb_ids.json</button>
@@ -77,7 +78,7 @@
   <div id="previewContainer"></div>
 </section>
 
-<!-- Modal for expired token test -->
+<!-- Modal for expired token -->
 <div id="tokenModal">
   <div class="modal-content">
     <div style="font-size:1.25em;font-weight:700;letter-spacing:-.02em;">Renew Token</div>
@@ -87,4 +88,3 @@
 </div>
 </body>
 </html>
-

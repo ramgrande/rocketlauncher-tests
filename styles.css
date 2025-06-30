@@ -1,256 +1,104 @@
-:root {
-  --fb-blue: #1877f2;
-  --fb-bg: #f0f2f5;
-  --fb-dark: #22305a;
-  --fb-light: #e7f3ff;
-}
 
-body {
-  margin: 0;
-  background: var(--fb-bg);
-  font-family: 'Segoe UI', Arial, Helvetica, sans-serif;
-}
-
-h1,
-h2 {
-  color: var(--fb-dark);
-}
-
-h1 {
-  font-size: 2.2em;
-  letter-spacing: -1px;
-  text-align: center;
-}
-
-section {
-  max-width: 830px;
-  margin: 40px auto;
-  padding: 32px 36px 24px;
-  background: #fff;
-  border: 1px solid #e0e0e0;
-  border-radius: 12px;
-  box-shadow: 0 2px 8px rgba(30, 50, 80, 0.09);
-}
-
-label {
-  display: block;
-  margin-bottom: 6px;
-  font-weight: 600;
-  color: var(--fb-dark);
-}
-
-input,
-textarea,
-button {
-  font-family: inherit;
-  font-size: 15px;
-  border: 1px solid #c3c3c3;
-  border-radius: 7px;
-  transition: border 0.15s;
-}
-
-input:focus,
-textarea:focus {
-  outline: none;
-  border-color: var(--fb-blue);
-}
-
-input,
-button {
-  padding: 9px 12px;
-}
-
-textarea {
-  padding: 10px 12px;
-  resize: none;
-}
-
-button {
-  background: var(--fb-blue);
-  color: #fff;
-  font-weight: 600;
-  border: none;
-  cursor: pointer;
-  box-shadow: 0 1px 3px rgba(30, 60, 120, 0.06);
-  transition: background 0.13s;
-}
-
-button:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-}
-
-.form-row {
-  margin-bottom: 18px;
-}
-
-.row-inline {
-  display: flex;
-  align-items: flex-end;
-  gap: 18px;
-}
-
-.ad-identify-box {
-  margin-bottom: 28px;
-  padding: 20px 22px 18px;
-  background: var(--fb-light);
-  border: 1.5px solid var(--fb-blue);
-  border-radius: 8px;
-  box-shadow: 0 1px 2px rgba(40, 100, 200, 0.04);
-}
-
-.ad-identify-title {
-  margin-bottom: 16px;
-  font-size: 1.2em;
-  font-weight: 700;
-  color: var(--fb-blue);
-}
-
-.ad-identify-fields {
-  display: grid;
-  gap: 15px;
-}
-
-.structure-picker {
-  margin: 22px 0 8px;
-  padding: 18px 20px 8px;
-  background: #f8fbff;
-  border: 1.5px solid #cbe1fc;
-  border-radius: 10px;
-}
-
-.structure-title {
-  margin-bottom: 10px;
-  font-weight: bold;
-  color: var(--fb-blue);
-}
-
-.structure-choice {
-  display: flex;
-  align-items: center;
-  margin-bottom: 10px;
-}
-
-.structure-choice label {
-  margin-left: 7px;
-  font-weight: 500;
-}
-
-.adset-num-input {
-  margin-left: 12px;
-  width: 52px;
-}
-
-.structure-choice input[type="radio"] {
-  accent-color: var(--fb-blue);
-}
-
-.structure-choice input[type="number"] {
-  border: 1px solid #c3c3c3;
-}
-
-.log-table {
-  width: 100%;
-  margin-top: 16px;
-  border-collapse: collapse;
-}
-
-.log-table th,
-.log-table td {
-  padding: 9px 11px;
-  border: 1px solid #ddd;
-  font-size: 15px;
-}
-
-.log-table th {
-  background: var(--fb-light);
-  color: var(--fb-blue);
-}
-
-#previewContainer {
-  margin-top: 24px;
-}
-
-.spinner {
-  display: inline-block;
-  width: 22px;
-  height: 22px;
-  vertical-align: middle;
-  margin-right: 8px;
-  border: 3px solid #b9d5f8;
-  border-top: 3px solid var(--fb-blue);
-  border-radius: 50%;
-  animation: spin 1s linear infinite;
-}
-
-@keyframes spin {
-  100% {
-    transform: rotate(360deg);
-  }
-}
-
-#tokenModal {
-  display: none;
-  position: fixed;
-  top: 0;
-  left: 0;
-  width: 100vw;
-  height: 100vh;
-  background: rgba(20, 40, 80, 0.18);
-  align-items: center;
-  justify-content: center;
-  z-index: 1001;
-}
-
-#tokenModal .modal-content {
-  min-width: 300px;
-  padding: 40px 30px 30px;
-  background: #fff;
-  color: var(--fb-blue);
-  font-size: 1.22em;
-  text-align: center;
-  border-radius: 14px;
-  box-shadow: 0 6px 36px rgba(40, 90, 150, 0.13);
-}
-
-#tokenModal button {
-  margin-top: 18px;
-  padding: 9px 24px;
-  font-size: 1.1em;
-  color: #fff;
-  background: var(--fb-blue);
-  border: none;
-  border-radius: 7px;
-  transition: background 0.13s;
-}
-
-#tokenModal button:hover {
-  background: #0952be;
-}
-
-.eye-btn {
-  position: absolute;
-  top: 10px;
-  right: 9px;
-  padding: 2px 6px;
-  background: transparent;
-  border: none;
-  color: var(--fb-blue);
-  cursor: pointer;
-}
-
-.input-wrap {
-  position: relative;
-  display: flex;
-  align-items: center;
-}
-
-.input-wrap input[type="password"],
-.input-wrap input[type="text"] {
-  width: 100%;
-}
-
-.ad-identify-fields input,
-.ad-identify-fields textarea {
-  width: 97%;
-}
+    :root {
+      --fb-blue: #1877f2;
+      --fb-bg: #f0f2f5;
+      --fb-dark: #22305a;
+      --fb-light: #e7f3ff;
+    }
+    body { font-family: 'Segoe UI', Arial, Helvetica, sans-serif; margin: 0; background: var(--fb-bg); }
+    h1, h2 { color: var(--fb-dark); }
+    h1 { font-size: 2.2em; letter-spacing: -1px; }
+    section {
+      background: #fff;
+      box-shadow: 0 2px 8px rgba(30,50,80,0.09);
+      border-radius: 12px;
+      margin: 40px auto;
+      max-width: 830px;
+      padding: 32px 36px 24px 36px;
+      border: 1px solid #e0e0e0;
+    }
+    label { font-weight: 600; color: var(--fb-dark); margin-bottom: 6px; display: block; }
+    input, textarea, button {
+      font-family: inherit;
+      border-radius: 7px;
+      border: 1px solid #c3c3c3;
+      font-size: 15px;
+      transition: border 0.15s;
+    }
+    input:focus, textarea:focus { border-color: var(--fb-blue); outline: none; }
+    input, button { padding: 9px 12px; }
+    textarea { padding: 10px 12px; resize: none; }
+    button {
+      background: var(--fb-blue); color: #fff; font-weight: 600; border: none;
+      cursor: pointer; box-shadow: 0 1px 3px rgba(30,60,120,0.06);
+      transition: background .13s;
+    }
+    button:disabled { opacity: .6; cursor: not-allowed; }
+    .form-row { margin-bottom: 18px; }
+    .row-inline { display: flex; gap: 18px; align-items: flex-end; }
+    .ad-identify-box {
+      background: var(--fb-light);
+      border-radius: 8px;
+      padding: 20px 22px 18px 22px;
+      margin-bottom: 28px;
+      border: 1.5px solid var(--fb-blue);
+      box-shadow: 0 1px 2px rgba(40,100,200,0.04);
+    }
+    .ad-identify-title { font-size: 1.2em; font-weight: 700; margin-bottom: 16px; color: var(--fb-blue);}
+    .ad-identify-fields { display: grid; gap: 15px; }
+    .structure-picker { margin: 22px 0 8px 0; padding: 18px 20px 8px 20px; background: #f8fbff; border-radius: 10px; border: 1.5px solid #cbe1fc; }
+    .structure-title { font-weight: bold; color: var(--fb-blue); margin-bottom: 10px; }
+    .structure-choice { display: flex; align-items: center; margin-bottom: 10px; }
+    .structure-choice label { font-weight: 500; margin-bottom: 0; margin-left: 7px;}
+    .adset-num-input { width: 52px; margin-left: 12px; }
+    .structure-choice input[type="radio"] { accent-color: var(--fb-blue); }
+    .structure-choice input[type="number"] { border: 1px solid #c3c3c3; }
+    .log-table { border-collapse: collapse; margin-top: 16px; width: 100%; }
+    .log-table th, .log-table td { border: 1px solid #ddd; padding: 9px 11px; font-size: 15px; }
+    .log-table th { background: var(--fb-light); color: var(--fb-blue); }
+    #previewContainer { margin-top: 24px; }
+    .spinner {
+      display: inline-block;
+      width: 22px;
+      height: 22px;
+      vertical-align: middle;
+      border: 3px solid #b9d5f8;
+      border-top: 3px solid var(--fb-blue);
+      border-radius: 50%;
+      animation: spin 1s linear infinite;
+      margin-right: 8px;
+    }
+    @keyframes spin { 100% { transform: rotate(360deg); } }
+    #tokenModal {
+      display: none; position: fixed; z-index: 1001;
+      left: 0; top: 0; width: 100vw; height: 100vh; background: rgba(20,40,80,0.18);
+      align-items: center; justify-content: center;
+    }
+    #tokenModal .modal-content {
+      background: #fff;
+      color: var(--fb-blue);
+      padding: 40px 30px 30px 30px;
+      border-radius: 14px;
+      font-size: 1.22em;
+      box-shadow: 0 6px 36px rgba(40,90,150,0.13);
+      text-align: center;
+      min-width: 300px;
+    }
+    #tokenModal button {
+      background: var(--fb-blue); color: #fff; font-size: 1.1em; margin-top: 18px; padding: 9px 24px;
+      border-radius: 7px; border: none;
+      transition: background .13s;
+    }
+    #tokenModal button:hover { background: #0952be; }
+    .eye-btn {
+      background: transparent;
+      border: none;
+      cursor: pointer;
+      position: absolute;
+      right: 9px; top: 10px;
+      padding: 2px 6px;
+      color: var(--fb-blue);
+    }
+    .input-wrap { position: relative; display: flex; align-items: center; }
+    .input-wrap input[type="password"], .input-wrap input[type="text"] { width: 100%; }
+    .ad-identify-fields input, .ad-identify-fields textarea { width: 100%; }
