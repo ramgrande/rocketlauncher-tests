@@ -19,15 +19,15 @@ $files  = $meta['files'];
 $progressFile = "$jobDir/$jobId.progress";
 file_put_contents($progressFile, '');     // truncate
 
-// 0. Fetch existing videos on Facebook to skip duplicates
+// 0. Fetch existing videos on the Ad Account to skip duplicates
 $fbToken   = $params['accessToken'];
-$fbAccount = $params['accountId'];
+$fbAccount = $params['accountId']; // ad account ID, e.g. '1234567890'
 $existingTitles = [];
 $after = null;
 do {
-    // Query Facebook Graph API for the page's videos, 100 per page
+    // Query Facebook Graph API for the ad account's videos, 100 per page
     $url = sprintf(
-        'https://graph.facebook.com/v19.0/%s/videos?fields=title&limit=100&access_token=%s',
+        'https://graph.facebook.com/v19.0/act_%s/advideos?fields=title&limit=100&access_token=%s',
         urlencode($fbAccount),
         urlencode($fbToken)
     );
@@ -88,6 +88,7 @@ foreach ($files as $i => $f) {
     }
 }
 
+// mark job complete
 touch("$jobDir/$jobId.done");
 
 /*───────────────────────── helper + progress() ───────────────────────*/
@@ -126,7 +127,7 @@ function downloadDriveFile(string $id, string $name, string $apiKey): string {
 
 function fbUploadVideo(string $path, string $token, string $account): string {
     // One-shot upload (≤25 MB). For larger files implement chunked transfer.
-    $ch = curl_init("https://graph-video.facebook.com/v19.0/{$account}/videos");
+    $ch = curl_init("https://graph-video.facebook.com/v19.0/act_{$account}/advideos");
     curl_setopt_array($ch, [
         CURLOPT_POST           => true,
         CURLOPT_RETURNTRANSFER => true,
