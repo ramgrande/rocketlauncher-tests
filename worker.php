@@ -25,21 +25,27 @@ $fbAccount = $params['accountId'];
 $existingTitles = [];
 $after = null;
 do {
-    $url = "https://graph.facebook.com/v19.0/{$fbAccount}/videos?fields=title&access_token={$fbToken}";
+    // Query Facebook Graph API for the page's videos, 100 per page
+    $url = sprintf(
+        'https://graph.facebook.com/v19.0/%s/videos?fields=title&limit=100&access_token=%s',
+        urlencode($fbAccount),
+        urlencode($fbToken)
+    );
     if ($after) {
         $url .= '&after=' . urlencode($after);
     }
+
     $ch = curl_init($url);
     curl_setopt_array($ch, [
         CURLOPT_RETURNTRANSFER => true,
         CURLOPT_TIMEOUT        => 30,
     ]);
     $response = curl_exec($ch);
-    $info     = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    $status   = curl_getinfo($ch, CURLINFO_HTTP_CODE);
     curl_close($ch);
 
-    if ($info >= 400 || !$response) {
-        // If fetching fails, log but continue (will upload all)
+    if ($status >= 400 || !$response) {
+        // If fetching fails, log warning once and stop trying
         progress('warning', 'facebook_list', 0, 'error', ['error' => 'Failed to fetch Facebook video list']);
         break;
     }
@@ -52,14 +58,14 @@ do {
             }
         }
     }
-    // Pagination cursor
+    // Continue if there is a next cursor
     $after = $data['paging']['cursors']['after'] ?? null;
 } while ($after);
 
 foreach ($files as $i => $f) {
     $name = $f['name'];
 
-    // Skip if already uploaded on Facebook
+    // Skip if name matches an existing Facebook title exactly
     if (in_array($name, $existingTitles, true)) {
         progress('skipped', $name, 100, 'success', ['message' => 'already_exists']);
         continue;
@@ -75,10 +81,10 @@ foreach ($files as $i => $f) {
         progress('upload', $name, 100);
 
         /* 3. Done! */
-        progress('done', $name, 100, 'success', ['video_id'=>$videoId]);
+        progress('done', $name, 100, 'success', ['video_id' => $videoId]);
         @unlink($tmp);
     } catch (Throwable $e) {
-        progress('done', $name, 100, 'error', ['error'=>$e->getMessage()]);
+        progress('done', $name, 100, 'error', ['error' => $e->getMessage()]);
     }
 }
 
@@ -89,21 +95,24 @@ touch("$jobDir/$jobId.done");
 function progress(string $phase, string $file, int $pct,
                   string $status='running', array $extra=[]): void {
     global $progressFile;
-    $p = json_encode(array_merge([
-        'phase'=>$phase,'filename'=>$file,'pct'=>$pct,'status'=>$status
-    ], $extra));
-    file_put_contents($progressFile, $p."\n", FILE_APPEND);
+    $entry = array_merge([
+        'phase'    => $phase,
+        'filename' => $file,
+        'pct'      => $pct,
+        'status'   => $status
+    ], $extra);
+    file_put_contents($progressFile, json_encode($entry) . "\n", FILE_APPEND);
 }
 
 function downloadDriveFile(string $id, string $name, string $apiKey): string {
-    $url  = "https://www.googleapis.com/drive/v3/files/$id?alt=media&key=$apiKey";
-    $dest = sys_get_temp_dir().'/'.$name;
+    $url  = "https://www.googleapis.com/drive/v3/files/{$id}?alt=media&key={$apiKey}";
+    $dest = sys_get_temp_dir() . '/' . $name;
     $ch   = curl_init($url);
     $fp   = fopen($dest, 'w');
     curl_setopt_array($ch, [
-        CURLOPT_FILE => $fp,
+        CURLOPT_FILE           => $fp,
         CURLOPT_FOLLOWLOCATION => true,
-        CURLOPT_TIMEOUT => 0
+        CURLOPT_TIMEOUT        => 0,
     ]);
     curl_exec($ch);
     fclose($fp);
@@ -111,24 +120,26 @@ function downloadDriveFile(string $id, string $name, string $apiKey): string {
         throw new RuntimeException('Google Drive download failed');
     }
     curl_close($ch);
+
     return $dest;
 }
 
 function fbUploadVideo(string $path, string $token, string $account): string {
-    /* one-shot upload (≤25 MB). For larger files implement chunked transfer */
-    $ch = curl_init("https://graph-video.facebook.com/v19.0/$account/videos");
+    // One-shot upload (≤25 MB). For larger files implement chunked transfer.
+    $ch = curl_init("https://graph-video.facebook.com/v19.0/{$account}/videos");
     curl_setopt_array($ch, [
         CURLOPT_POST           => true,
         CURLOPT_RETURNTRANSFER => true,
         CURLOPT_POSTFIELDS     => [
             'access_token' => $token,
-            'source'       => new CURLFile($path)
-        ]
+            'source'       => new CURLFile($path),
+        ],
     ]);
     $res = json_decode(curl_exec($ch), true);
     curl_close($ch);
+
     if (empty($res['id'])) {
-        throw new RuntimeException('Facebook upload failed: '.json_encode($res));
+        throw new RuntimeException('Facebook upload failed: ' . json_encode($res));
     }
-    return $res['id'];        // video_id
+    return $res['id'];
 }
