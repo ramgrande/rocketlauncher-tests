@@ -1,95 +1,108 @@
 <?php
-/*  Facebook Rocket‑Launcher – upload.php
-    ===============================================================
-    v1.2  (2025‑06‑29)  – duplicate‑title check + unlimited runtime
-    v1.3  (2025‑06‑29)  – extra debug/robustness
-*/
+/**
+ *  upload.php – JSON API
+ *  ---------------------
+ *  POST body (application/json):
+ *    {
+ *      "folderId"   : "...",   // Google Drive folder
+ *      "googleApiKey": "...",
+ *      "accessToken": "...",   // Facebook Graph token
+ *      "accountId"  : "act_123456",
+ *      "count"      : true     // optional flag: only return file count
+ *    }
+ *
+ *  © 2025 –  MIT Licence – Minimal demo, **not** production‑grade security.
+ */
+declare(strict_types=1);
 
-if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
-    http_response_code(405);  exit('Only POST allowed');
-}
-header('Content-Type: application/json; charset=utf-8');
+error_reporting(E_ALL);
+ini_set('display_errors', '0');          // Keep JSON output clean
+ini_set('log_errors', '1');
+ini_set('error_log', __DIR__.'/php-error.log');
 
-/* ====== Debug dump: see exactly what PHP receives ====== */
-$raw = file_get_contents('php://input');
-file_put_contents('raw_post.txt', $raw);
-$data = json_decode($raw, true) ?: [];
-file_put_contents('debug.json', json_encode($data, JSON_PRETTY_PRINT));
+header('Content-Type: application/json');
 
-/* ====== Safely extract (case-sensitive!) ====== */
-$folderId     = isset($data['folderId'])     ? trim($data['folderId'])     : '';
-$googleKey    = isset($data['googleApiKey']) ? trim($data['googleApiKey']) : '';
-$accessToken  = isset($data['accessToken'])  ? trim($data['accessToken'])  : '';
-$accountId    = isset($data['accountId'])    ? trim($data['accountId'])    : '';
-$isCountOnly  = !empty($data['count']);
+try {
+    /* 1. Parse JSON safely */
+    $payload = json_decode(file_get_contents('php://input'), true, 512, JSON_THROW_ON_ERROR);
 
-/* ====== Stronger missing-field reporting ====== */
-foreach (['folderId','googleApiKey','accessToken','accountId'] as $k) {
-    $v = ($k === 'googleApiKey') ? $googleKey : ($k === 'folderId' ? $folderId : ($k === 'accessToken' ? $accessToken : $accountId));
-    if (!isset($data[$k]) || !$v) {
-        http_response_code(400);
-        exit(json_encode([
-            'error'=>"Missing $k",
-            'debug'=>[
-                'got_keys'=>array_keys($data),
-                'raw_value'=>$data[$k] ?? null,
-                'trimmed'=>$v,
-                'all_data'=>$data
-            ]
-        ]));
+    foreach (['folderId','googleApiKey','accessToken','accountId'] as $key) {
+        if (empty($payload[$key])) {
+            throw new InvalidArgumentException("Missing field: $key");
+        }
     }
+    ['folderId'=>$folderId,
+     'googleApiKey'=>$googleApiKey,
+     'accessToken'=>$accessToken,
+     'accountId'=>$accountId] = $payload;
+
+    /* 2‑A  Quick “count only” branch */
+    if (!empty($payload['count'])) {
+        echo json_encode(['count' => countDriveVideos($folderId, $googleApiKey)],
+                         JSON_THROW_ON_ERROR);
+        exit;
+    }
+
+    /* 2‑B  Create a background job */
+    $jobId  = uniqid('job_', true);
+    $jobDir = __DIR__ . '/jobs';
+    if (!is_dir($jobDir)) mkdir($jobDir, 0777, true);
+
+    // Gather list of videos first
+    $driveFiles = listDriveVideos($folderId, $googleApiKey);
+
+    file_put_contents("$jobDir/$jobId.json", json_encode([
+        'created' => time(),
+        'files'   => $driveFiles,
+        'params'  => compact('folderId','googleApiKey','accessToken','accountId')
+    ], JSON_PRETTY_PRINT));
+
+    // Kick off the detached worker
+    $cmd = escapeshellcmd(PHP_BINARY)." ".escapeshellarg(__DIR__.'/worker.php')
+         ." ".escapeshellarg($jobId)." > /dev/null 2>&1 &";
+    exec($cmd);
+
+    echo json_encode(['jobId'=>$jobId], JSON_THROW_ON_ERROR);
+
+} catch (Throwable $e) {
+    http_response_code(500);
+    echo json_encode(['error'=>$e->getMessage()]);
 }
 
-/*─────────── 0. Run‑time ceilings – blow them away ───────────*/
-set_time_limit(0);
-ini_set('max_execution_time','0');
-ini_set('zlib.output_compression',0);
-ob_implicit_flush(1);
+/*──────────────────────── Helper functions ───────────────────────────*/
 
-/*─────────── 1. Helper to fetch existing FB video titles ─────*/
-function listFbTitles(string $accountId,string $token): array {
-    $url = "https://graph.facebook.com/v19.0/{$accountId}/advideos"
-         . "?fields=id,title&limit=5000&access_token={$token}";
-    $out = [];
-    do{
-        $raw = @file_get_contents($url);
-        if ($raw === false) break;
-        $js  = json_decode($raw,true);
-        foreach ($js['data']??[] as $v) $out[$v['title']] = $v['id'];
-        $url = $js['paging']['next'] ?? null;
-    }while($url);
+function countDriveVideos(string $folderId, string $apiKey): int {
+    return count(listDriveVideos($folderId, $apiKey));
+}
+
+function listDriveVideos(string $folderId, string $apiKey): array {
+    $pageToken = null;  $out = [];
+    do {
+        $url = 'https://www.googleapis.com/drive/v3/files'
+             .'?q='.urlencode("'$folderId' in parents and mimeType contains 'video/' and trashed=false")
+             .'&fields=files(id,name,size,mimeType),nextPageToken'
+             .'&pageSize=1000'.($pageToken ? "&pageToken=$pageToken" : '')
+             ."&key=$apiKey";
+
+        $json = curlGet($url);
+        $out  = array_merge($out, $json['files'] ?? []);
+        $pageToken = $json['nextPageToken'] ?? null;
+    } while ($pageToken);
+
     return $out;
 }
 
-/*─────────── 2. Quick “how many files” branch ────────────────*/
-if ($isCountOnly) {
-    $g = "https://www.googleapis.com/drive/v3/files"
-       . "?q='".urlencode($folderId)."'%20in%20parents"
-       . "&fields=files(id)&key={$googleKey}";
-    $cnt = 0;
-    if ($js = @json_decode(@file_get_contents($g), true))
-        $cnt = count($js['files'] ?? []);
-    echo $cnt;    // ← **plain integer, not JSON**
-    exit;
+function curlGet(string $url): array {
+    $ch = curl_init($url);
+    curl_setopt_array($ch, [
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_FAILONERROR    => true,
+        CURLOPT_TIMEOUT        => 30,
+    ]);
+    $raw = curl_exec($ch);
+    if ($raw === false) {
+        throw new RuntimeException('cURL: '.curl_error($ch));
+    }
+    curl_close($ch);
+    return json_decode($raw, true, 512, JSON_THROW_ON_ERROR);
 }
-
-/*─────────── 3. Build job state & spawn worker ───────────────*/
-$existingTitles = listFbTitles($accountId,$accessToken);
-$tmpDir = sys_get_temp_dir().'/fb-job-'.uniqid();
-mkdir($tmpDir,0777,true);
-
-$state = [
-  'dir'        => $tmpDir,
-  'folderId'   => $folderId,
-  'googleKey'  => $googleKey,
-  'accessToken'=> $accessToken,
-  'accountId'  => $accountId,
-  'existing'   => $existingTitles,
-];
-file_put_contents("$tmpDir/state.json", json_encode($state, JSON_UNESCAPED_SLASHES));
-
-$jobId = basename($tmpDir);
-$cmd   = PHP_BINDIR.'/php '.escapeshellarg(__DIR__.'/worker.php').' '.escapeshellarg($jobId).' > /dev/null 2>&1 &';
-exec($cmd);
-
-echo json_encode(['jobId'=>$jobId], JSON_UNESCAPED_SLASHES);

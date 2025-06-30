@@ -1,57 +1,57 @@
-/*  Facebook Rocket‑Launcher – front‑end logic
+/*  Facebook Rocket‑Launcher – front‑end logic
     ===============================================================
-    v1.4  (2025‑06‑29)
-      • FIX: spread operator in XLSX sheet build
-      • FIX: plain‑integer “count” parser
-      • everything else identical to v1.3
+    © 2025 – MIT‑licensed sample code.  No warranty; use at your own
+    discretion and be sure to review OAuth / Graph API limits, etc.
 */
 
-window.addEventListener('DOMContentLoaded', () => {
+window.addEventListener('DOMContentLoaded', function () {
 
-  /*━━━━━━━━━━━━━━━━━━ 0. Tiny helpers ━━━━━━━━━━━━━━━━━━*/
-  const $  = s => document.querySelector(s);
-  const $$ = s => [...document.querySelectorAll(s)];
-  const stripExt = n => n.replace(/\.[^.]+$/, '');
+  /*━━━━━━━━━━━━━━━━━━ 1. Tiny helpers ━━━━━━━━━━━━━━━━━━*/
+  const $ = sel => document.querySelector(sel);
 
-  /*━━━━━━━━━━━━━━━━ 1. Secret‑input eye toggles ━━━━━━━━*/
+  // Show / hide secret inputs (Google key & FB token)
   $('#toggleToken')    ?.addEventListener('click', () => toggleSecret('#accessToken',  '#eyeIcon'));
   $('#toggleGoogleKey')?.addEventListener('click', () => toggleSecret('#googleApiKey', '#googleEyeIcon'));
+
   function toggleSecret(inputSel, iconSel) {
-    const inp = $(inputSel), ico = $(iconSel);
+    const inp = $(inputSel);
+    const ico = $(iconSel);
     if (!inp || !ico) return;
     if (inp.type === 'password') { inp.type = 'text';  ico.textContent = '🙈'; }
     else                         { inp.type = 'password'; ico.textContent = '👁️'; }
   }
 
-  /*━━━━━━━━━━━━━━━━ 2. Safe JSON fetch ━━━━━━━━━━━━━━━━*/
-  async function safeJson(resp){
-    const t = await resp.text();
-    try { return JSON.parse(t); } catch { throw new Error(t || resp.statusText); }
+  /** Read a `fetch` Response safely as JSON or throw the raw text. */
+  async function safeJson(resp) {
+    const raw = await resp.text();
+    try { return JSON.parse(raw); }
+    catch { throw new Error(raw || resp.statusText); }
   }
 
-  /*━━━━━━━━━━━━━━━━ 3. Upload‑log helpers ━━━━━━━━━━━━━*/
-  const rowMap  = Object.create(null);   // filename → <tr>
-  let remaining = 0;
+  /*━━━━━━━━━━━━━━━━━━ 2. Upload‑log helpers ━━━━━━━━━━━━*/
+  const rowMap   = Object.create(null);   // filename → <tr>
+  let doneCount  = 0;
 
-  function makeRow(fn, status='Queued'){
+  function makeRow(filename, status = 'Queued') {
     const tr = document.createElement('tr');
     tr.innerHTML = `
-      <td>${fn}</td>
+      <td>${filename}</td>
       <td class="vidId"></td>
       <td class="statCell">
         <div class="bar"><div class="fill" style="width:0"></div></div>
         <span class="txt">${status}</span>
       </td>`;
-    $('.log-table tbody')?.appendChild(tr);
-    rowMap[fn] = tr;
+    document.querySelector('.log-table tbody')?.appendChild(tr);
+    rowMap[filename] = tr;
   }
-  const updateBar = (tr, pct, txt) => {
+
+  function updateBar(tr, pct, txt) {
     if (!tr) return;
     tr.querySelector('.fill').style.width = pct + '%';
     tr.querySelector('.txt').textContent  = txt;
-  };
+  }
 
-  /*━━━━━━━━━━━━━━━━ 4. Campaign template data ━━━━━━━━━*/
+  /*━━━━━━━━━━━━━━━━━━ 3. Campaign template data ━━━━━━━*/
   const headers = [
     "Campaign ID","Campaign Name","Campaign Status","Campaign Objective","Buying Type",
     "Campaign Start Time","New Objective","Buy With Prime Type","Is Budget Scheduling Enabled For Campaign",
@@ -81,7 +81,7 @@ window.addEventListener('DOMContentLoaded', () => {
     null,null,"untitled","Video Page Post Ad","", "",null,"LEARN_MORE","[]","No",null,"No","USER_ENROLLED_NON_DCO","TEXT_LIQUIDITY"
   ];
 
-  /* pre‑computed indices */
+  /* Column indices we’ll re‑use a lot */
   const idxCampaignName = headers.indexOf("Campaign Name");
   const idxAdSetName    = headers.indexOf("Ad Set Name");
   const idxAdName       = headers.indexOf("Ad Name");
@@ -91,25 +91,27 @@ window.addEventListener('DOMContentLoaded', () => {
   const idxTitle        = headers.indexOf("Title");
   const idxLink         = headers.indexOf("Link");
 
-  /* Prefill form with defaults */
-  $('#bodyField').value         = placeholderRow[idxBody];
-  $('#titleField').value        = placeholderRow[idxTitle];
-  $('#linkField').value         = placeholderRow[idxLink];
-  $('#campaignNameField').value = placeholderRow[idxCampaignName];
+  const stripExt = name => name.replace(/\.[^.]+$/, '');
 
-  /*━━━━━━━━━━━━━━━━ 5. Structure picker ━━━━━━━━━━━━━━━*/
-  function renderStructurePicker(videoCount = 10){
+  /* Prefill textboxes so the user sees something */
+  $('#bodyField').value         = placeholderRow[idxBody]  ?? '';
+  $('#titleField').value        = placeholderRow[idxTitle] ?? '';
+  $('#linkField').value         = placeholderRow[idxLink]  ?? '';
+  $('#campaignNameField').value = placeholderRow[idxCampaignName] ?? '';
+
+  /*━━━━━━━━━━━━━━━━━━ 4. Campaign structure picker ━━━━*/
+  function renderStructurePicker(videoCount = 10) {
     const el = $('#structurePicker');
     el.innerHTML = `
       <div class="structure-picker">
         <div class="structure-title">Campaign Structure</div>
         <div class="structure-choice">
           <input type="radio" name="structure" id="oneAdset" value="one-adset" checked>
-          <label for="oneAdset">1 Ad Set, multiple ads (all videos under <b>Adset #1</b>)</label>
+          <label for="oneAdset">1 Ad Set, multiple ads (all videos under <b>Adset #1</b>)</label>
         </div>
         <div class="structure-choice">
           <input type="radio" name="structure" id="abo1to1" value="abo-1to1">
-          <label for="abo1to1">1 Ad Set per 1 Ad (ABO 1:1)</label>
+          <label for="abo1to1">1 Ad Set per 1 Ad (ABO 1:1)</label>
         </div>
         <div class="structure-choice">
           <input type="radio" name="structure" id="customABO" value="custom">
@@ -122,7 +124,7 @@ window.addEventListener('DOMContentLoaded', () => {
       </div>`;
     const numInput = $('#adsetNumInput');
     numInput.disabled = true;
-    $$('input[name="structure"]').forEach(r =>
+    document.querySelectorAll('input[name="structure"]').forEach(r =>
       r.addEventListener('change', () => { numInput.disabled = r.value !== 'custom'; })
     );
     numInput.addEventListener('input', () => {
@@ -132,172 +134,179 @@ window.addEventListener('DOMContentLoaded', () => {
   }
   renderStructurePicker();
 
-  /*━━━━━━━━━━━━━━━━ 6. XLSX preview pane ━━━━━━━━━━━━━*/
-  let rows       = [ placeholderRow.slice() ];
-  let globalData = [];
+  /*━━━━━━━━━━━━━━━━━━ 5. XLSX preview pane ━━━━━━━━━━━*/
+  let rows        = [ placeholderRow.slice() ];
+  let globalData  = [];
 
-  function populatePreview(){
+  function populatePreview() {
     const cont = $('#previewContainer');
     cont.innerHTML = '';
     const wrap = document.createElement('div');
     wrap.className = 'form-container';
-    headers.forEach((h,i)=>{
+    headers.forEach((h, i) => {
       const lab = document.createElement('label'); lab.textContent = h;
       const inp = document.createElement('input'); inp.readOnly = true;
       inp.value = rows[0][i] ?? '';
-      wrap.appendChild(lab); wrap.appendChild(inp);
+      wrap.appendChild(lab);  wrap.appendChild(inp);
     });
     cont.appendChild(wrap);
   }
   populatePreview();
 
-  /*━━━━━━━━━━━━━━━━ 7. “Load All Uploaded” ━━━━━━━━━━━*/
-  $('#loadBtn').addEventListener('click', async ()=>{
-    try{
-      const r = await fetch('latest_fb_ids.json?ts='+Date.now());
+  /*━━━━━━━━━━━━━━━━━━ 6. “Load All Uploaded” button ━━*/
+  $('#loadBtn').addEventListener('click', async () => {
+    try {
+      const r = await fetch('latest_fb_ids.json?ts=' + Date.now());
       if (!r.ok) throw new Error('latest_fb_ids.json not found');
       const data = await r.json();
-      if (!Array.isArray(data) || !data.length) throw new Error('JSON must be a non‑empty array');
+      if (!Array.isArray(data) || data.length === 0) throw new Error('JSON must be a non‑empty array');
 
       globalData = data;
       rows = [];
       const campNameInput = $('#campaignNameField').value.trim();
 
-      data.forEach(({filename, video_id})=>{
-        const r = placeholderRow.slice();
+      data.forEach(({ filename, video_id }) => {
+        const r  = placeholderRow.slice();
         r[idxVideoID]      = video_id;
         r[idxVideoFile]    = filename;
         r[idxCampaignName] = campNameInput || r[idxCampaignName];
         r[idxAdName]       = stripExt(filename);
-        r[idxTitle]        = $('#titleField').value.trim()  || r[idxTitle];
-        r[idxBody]         = $('#bodyField').value.trim()   || r[idxBody];
-        r[idxLink]         = $('#linkField').value.trim()   || r[idxLink];
         rows.push(r);
       });
 
       renderStructurePicker(data.length);
       populatePreview();
-      alert(`Loaded ${rows.length} video${rows.length>1?'s':''}.`);
-    }catch(err){ alert(err.message); }
+      alert(`Loaded ${rows.length} video${rows.length > 1 ? 's' : ''}.`);
+    } catch (err) { alert(err.message); }
   });
 
-  /*━━━━━━━━━━━━━━━━ 8. Download XLSX ━━━━━━━━━━━━━━━━━*/
-  $('#downloadBtn').addEventListener('click', ()=>{
-    if (!globalData.length){ alert('Load video IDs first.'); return; }
+  /*━━━━━━━━━━━━━━━━━━ 7. Download XLSX button ━━━━━━━━*/
+  $('#downloadBtn').addEventListener('click', () => {
+    if (!globalData.length) { alert('Load video IDs first.'); return; }
 
-    const structure = $('input[name="structure"]:checked').value;
+    const structure = document.querySelector('input[name="structure"]:checked').value;
     let finalRows   = [];
 
-    if (structure === 'one-adset'){
+    if (structure === 'one-adset') {
       finalRows = rows;
-    }else if (structure === 'abo-1to1'){
-      finalRows = rows.map((r,i)=>{
+    } else if (structure === 'abo-1to1') {
+      finalRows = rows.map((r, i) => {
         const cp = r.slice();
-        cp[idxAdSetName] = `Adset #${i+1}`;
+        cp[idxAdSetName] = `Adset #${i + 1}`;
         return cp;
       });
-    }else{
-      const n = parseInt($('#adsetNumInput').value,10) || 1;
-      finalRows = rows.map((r,i)=>{
+    } else {                       // custom n ad sets
+      const n = parseInt($('#adsetNumInput').value, 10) || 1;
+      finalRows = rows.map((r, i) => {
         const cp = r.slice();
-        cp[idxAdSetName] = `Adset #${(i%n)+1}`;
+        cp[idxAdSetName] = `Adset #${(i % n) + 1}`;
         return cp;
       });
     }
 
+    /* Build workbook & download */
     const wb = XLSX.utils.book_new();
-    const ws = XLSX.utils.aoa_to_sheet([headers, ...finalRows]);   // FIXED spread operator
+    const ws = XLSX.utils.aoa_to_sheet([headers, ...finalRows]);
     XLSX.utils.book_append_sheet(wb, ws, 'Sheet1');
     XLSX.writeFile(wb, 'facebook_campaign.xlsx');
   });
 
-  /*━━━━━━━━━━━━━━━━ 9. Main upload workflow ━━━━━━━━━*/
-  $('#uploadForm').addEventListener('submit', async e=>{
+  /*━━━━━━━━━━━━━━━━━━ 8. Upload workflow ━━━━━━━━━━━━*/
+  $('#uploadForm').addEventListener('submit', async e => {
     e.preventDefault();
 
-    const folderId     = $('#folderId'    ).value.trim();
+    const folderId     = $('#folderId').value.trim();
+    const accessToken  = $('#accessToken').value.trim();
+    const accountId    = $('#accountId').value.trim();
     const googleApiKey = $('#googleApiKey').value.trim();
-    const accessToken  = $('#accessToken' ).value.trim();
-    const accountId    = $('#accountId'   ).value.trim();
     const uploadBtn    = $('#uploadBtn');
     const logDiv       = $('#uploadLogContainer');
 
     uploadBtn.disabled = true;
     logDiv.innerHTML   = '';
 
-    /* 9‑A ── ask server for file count */
+    /* 8‑A  Count files first */
     let fileCount = 0;
-    try{
-      const r = await fetch('upload.php',{
-        method:'POST',headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({folderId,googleApiKey,accessToken,accountId,count:true})
+    try {
+      const r  = await fetch('upload.php', {
+        method : 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body   : JSON.stringify({ folderId, accessToken, accountId, googleApiKey, count: true })
       });
-      if(!r.ok) throw new Error(await r.text());
-      fileCount = (+await r.text())|0;            // plain integer parser – FIXED
-    }catch(err){
-      logDiv.textContent = 'Count failed: '+err.message;
-      uploadBtn.disabled = false; return;
+      if (!r.ok) throw new Error(await r.text());
+      const js = await safeJson(r);
+      fileCount = +js.count || 0;
+    } catch (err) {
+      logDiv.textContent = 'Count failed: ' + err.message;
+      uploadBtn.disabled = false;
+      return;
     }
 
-    /* 9‑B ── draw table skeleton */
-    logDiv.innerHTML = '<b>Upload Log:</b><table class="log-table"><thead><tr><th>Filename</th><th>Video ID</th><th>Status</th></tr></thead><tbody></tbody></table>';
+    /* 8‑B  Draw table skeleton */
+    logDiv.innerHTML = '<b>Upload Log:</b>';
+    logDiv.insertAdjacentHTML('beforeend', `
+      <table class="log-table">
+        <thead><tr><th>Filename</th><th>Video ID</th><th>Status</th></tr></thead>
+        <tbody></tbody>
+      </table>`);
 
-    /* 9‑C ── start job */
-    let jobId='';
-    try{
-      const r = await fetch('upload.php',{
-        method:'POST',headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({folderId,googleApiKey,accessToken,accountId})
+    /* 8‑C  Kick off job */
+    let jobId;
+    try {
+      const r = await fetch('upload.php', {
+        method : 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body   : JSON.stringify({ folderId, accessToken, accountId, googleApiKey })
       });
-      if(!r.ok) throw new Error(await r.text());
-      jobId = (await safeJson(r)).jobId;
-    }catch(err){
-      logDiv.textContent = 'Could not start upload: '+err.message;
-      uploadBtn.disabled = false; return;
+      if (!r.ok) throw new Error(await r.text());
+      const js = await safeJson(r);
+      jobId = js.jobId;
+    } catch (err) {
+      logDiv.textContent = 'Could not start upload: ' + err.message;
+      uploadBtn.disabled = false;
+      return;
     }
 
-    /* 9‑D ── live updates via SSE + auto‑reconnect */
-    let es, lastBeat=Date.now(), closed=false;
-    const connect = ()=>{
-      es = new EventSource(`progress.php?jobId=${encodeURIComponent(jobId)}`);
-      es.onmessage = ev=>{
-        lastBeat = Date.now();
-        const m = JSON.parse(ev.data);
+    /* 8‑D   Live progress via Server‑Sent Events */
+    let lastBeat = Date.now();
+    const es = new EventSource(`progress.php?jobId=${encodeURIComponent(jobId)}`);
 
-        if (m.init){
-          m.files.forEach(fn=>makeRow(fn));
-          remaining = m.files.length;
-          return;
-        }
+    es.onmessage = ev => {
+      lastBeat = Date.now();
+      const m = JSON.parse(ev.data);
+
+      if (m.init) {
+        m.files.forEach(fn => makeRow(fn));
+        return;
+      }
+      if (m.phase === 'download' || m.phase === 'upload') {
+        const verb = m.phase === 'download' ? 'Downloading' : 'Uploading';
+        updateBar(rowMap[m.filename], m.pct, `${verb} – ${m.pct}%`);
+        return;
+      }
+      if (m.phase === 'done') {
+        const ok = m.status === 'success';
         const tr = rowMap[m.filename];
-        if (m.phase==='download' || m.phase==='upload'){
-          const verb = m.phase==='download' ? 'Downloading' : 'Uploading';
-          updateBar(tr, m.pct, `${verb} – ${m.pct}%`);
-          return;
-        }
-        if (m.phase==='done'){
-          if (m.status==='duplicate'){
-            updateBar(tr,100,'Skipped ♻️');
-            tr.querySelector('.vidId').textContent = m.video_id;
-          }else if (m.status==='success'){
-            updateBar(tr,100,'Uploaded ✅');
-            tr.querySelector('.vidId').textContent = m.video_id;
-          }else{
-            updateBar(tr,100,'Failed ❌');
-          }
-          if(--remaining===0){ uploadBtn.disabled=false; es.close(); closed=true; }
-        }
-      };
-      es.onerror = ()=>{ es.close(); if(!closed) setTimeout(connect,1600); };
+        if (tr) tr.querySelector('.vidId').textContent = m.video_id || '';
+        updateBar(tr, 100, ok ? 'Uploaded ✅' : 'Failed ❌');
+        doneCount++;
+        if (doneCount === fileCount) uploadBtn.disabled = false;
+      }
     };
-    connect();
 
-    /* 9‑E ── heartbeat overlay */
-    setInterval(()=>{
-      const ago = Math.round((Date.now()-lastBeat)/1000);
+    es.onerror = () => {
+      es.close();
+      logDiv.insertAdjacentHTML('beforeend', '<div class="error">Connection lost.</div>');
+      uploadBtn.disabled = false;
+    };
+
+    /* 8‑E  Heartbeat counter so the UI feels alive */
+    setInterval(() => {
+      const ago = Math.round((Date.now() - lastBeat) / 1000);
       logDiv.querySelector('.heartbeat')?.remove();
-      if(!closed) logDiv.insertAdjacentHTML('beforeend',`<div class="heartbeat">Last activity ${ago}s ago</div>`);
-    },1000);
+      logDiv.insertAdjacentHTML('beforeend',
+        `<div class="heartbeat">Last activity ${ago}s ago</div>`);
+    }, 1000);
   });
 
 });
