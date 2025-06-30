@@ -53,7 +53,6 @@ do {
     $data = json_decode($response, true);
     if (!empty($data['data']) && is_array($data['data'])) {
         foreach ($data['data'] as $video) {
-            // Only store non-empty titles
             if (!empty($video['title'])) {
                 $existingTitles[] = $video['title'];
             }
@@ -77,8 +76,8 @@ foreach ($files as $i => $f) {
         $tmp = downloadDriveFile($f['id'], $name, $params['googleApiKey']);
         progress('download', $name, 100);
 
-        /* 2. Upload single-chunk (≤25 MB) to Facebook */
-        $videoId = fbUploadVideo($tmp, $fbToken, $fbAccount);
+        /* 2. Upload single-chunk (≤25 MB) to Facebook with title */
+        $videoId = fbUploadVideo($tmp, $fbToken, $fbAccount, $name);
         progress('upload', $name, 100);
 
         /* 3. Done! */
@@ -126,7 +125,7 @@ function downloadDriveFile(string $id, string $name, string $apiKey): string {
     return $dest;
 }
 
-function fbUploadVideo(string $path, string $token, string $account): string {
+function fbUploadVideo(string $path, string $token, string $account, string $title): string {
     // One-shot upload (≤25 MB). For larger files implement chunked transfer.
     $ch = curl_init("https://graph-video.facebook.com/v19.0/act_{$account}/advideos");
     curl_setopt_array($ch, [
@@ -135,6 +134,7 @@ function fbUploadVideo(string $path, string $token, string $account): string {
         CURLOPT_POSTFIELDS     => [
             'access_token' => $token,
             'source'       => new CURLFile($path),
+            'title'        => $title,
         ],
     ]);
     $res = json_decode(curl_exec($ch), true);
