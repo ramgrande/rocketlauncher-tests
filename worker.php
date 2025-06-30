@@ -24,8 +24,21 @@ $fbAccount  = $params['accountId'];    // ad account ID (numeric)
 $googleKey  = $params['googleApiKey'];
 $fbVersion  = 'v19.0';
 
-// 1. List existing FB videos -> map of title => id
+// 1. List existing FB videos, merging current API results with
+//    entries from latest_fb_ids.json -> map of title => id
 $existing = [];
+$idsFile = __DIR__ . '/latest_fb_ids.json';
+if (is_file($idsFile)) {
+    $json = json_decode(file_get_contents($idsFile), true);
+    if (is_array($json)) {
+        foreach ($json as $row) {
+            if (!empty($row['filename']) && !empty($row['video_id'])) {
+                $bn = pathinfo($row['filename'], PATHINFO_FILENAME);
+                $existing[$bn] = $row['video_id'];
+            }
+        }
+    }
+}
 $nextPage = null;
 do {
     $endpoint = sprintf(
@@ -73,6 +86,7 @@ foreach ($files as $file) {
         }
         progress('upload', $fullName, 100);
         progress('done',   $fullName, 100, 'success', ['video_id' => $videoId]);
+        $existing[$baseName] = $videoId; // avoid duplicates later in this run
         @unlink($tmpPath);
     } catch (Throwable $e) {
         progress('done', $fullName, 100, 'error', ['error' => $e->getMessage()]);
