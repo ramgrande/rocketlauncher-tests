@@ -53,20 +53,21 @@ do {
     $data = json_decode($response, true);
     if (!empty($data['data']) && is_array($data['data'])) {
         foreach ($data['data'] as $video) {
+            // Only store non-empty titles
             if (!empty($video['title'])) {
                 $existingTitles[] = $video['title'];
             }
         }
     }
-    // Continue if there is a next cursor
+    // Pagination cursor
     $after = $data['paging']['cursors']['after'] ?? null;
 } while ($after);
 
 foreach ($files as $i => $f) {
     $name = $f['name'];
 
-    // Skip if name matches an existing Facebook title exactly
-    if (in_array($name, $existingTitles, true)) {
+    // Skip if name matches an existing Facebook video title exactly
+    if (!empty($existingTitles) && in_array($name, $existingTitles, true)) {
         progress('skipped', $name, 100, 'success', ['message' => 'already_exists']);
         continue;
     }
