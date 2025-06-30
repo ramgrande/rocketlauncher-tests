@@ -1,8 +1,8 @@
 <?php
 /**
- *  worker.php  – Detached job executor with chunked Facebook upload
- *  ---------------------------------------------------------------
- *  Called from upload.php:   php worker.php <jobId>
+ *  worker.php – Detached job executor with chunked Facebook upload
+ *  ----------------------------------------------------------------
+ *  Called from upload.php: php worker.php <jobId>
  *  Writes newline-separated JSON to jobs/<jobId>.progress
  */
 declare(strict_types=1);
@@ -10,137 +10,165 @@ error_reporting(E_ALL);
 ini_set('log_errors','1');
 ini_set('display_errors','0');
 
-$jobId  = $argv[1] ?? '';
-$jobDir = __DIR__ . '/jobs';
-$meta   = json_decode(file_get_contents("$jobDir/$jobId.json"), true);
-$params = $meta['params'];   // folderId, googleApiKey, accessToken, accountId
-$files  = $meta['files'];
-
+$jobId      = $argv[1] ?? '';
+$jobDir     = __DIR__ . '/jobs';
+$meta       = json_decode(file_get_contents("$jobDir/$jobId.json"), true);
+$params     = $meta['params'];    // folderId, googleApiKey, accessToken, accountId
+$files      = $meta['files'];
 $progressFile = "$jobDir/$jobId.progress";
 file_put_contents($progressFile, ''); // truncate
 
-$fbToken   = $params['accessToken'];
-$fbAccount = $params['accountId']; // ad account ID
-$GOOGLE_API_KEY = $params['googleApiKey'];
-$FB_VER = 'v19.0';
+// Credentials and config
+$fbToken    = $params['accessToken'];
+$fbAccount  = $params['accountId'];    // ad account ID (numeric)
+$googleKey  = $params['googleApiKey'];
+$fbVersion  = 'v19.0';
 
-// 1. Build map of existing FB videos: title => id
+// 1. List existing FB videos -> map of title => id
 $existing = [];
-$after = null;
+$nextPage = null;
 do {
-    $url = sprintf(
+    $endpoint = sprintf(
         'https://graph.facebook.com/%s/act_%s/advideos?fields=title,id&limit=100&access_token=%s',
-        $FB_VER, urlencode($fbAccount), urlencode($fbToken)
+        $fbVersion, urlencode($fbAccount), urlencode($fbToken)
     );
-    if ($after) {
-        $url .= '&after=' . urlencode($after);
+    if ($nextPage) {
+        $endpoint = $nextPage;
     }
-    $resp = curl_exec(curl_init($url));
-    $info = curl_getinfo(curl_init($url), CURLINFO_HTTP_CODE);
-    if ($info >= 400 || !$resp) {
-        progress('warning','facebook_list',0,'error',['error'=>'FB list fail']);
+    $response = graphJson($endpoint);
+    if (!empty($response['error'])) {
+        progress('warning','facebook_list',0,'error',['error'=>'fb_list_fail']);
         break;
     }
-    $data = json_decode($resp, true);
-    foreach ($data['data'] ?? [] as $v) {
-        if (!empty($v['title'])) {
-            $existing[$v['title']] = $v['id'];
+    foreach ($response['data'] ?? [] as $video) {
+        if (!empty($video['title'])) {
+            // store exact title string
+            $existing[$video['title']] = $video['id'];
         }
     }
-    $after = $data['paging']['cursors']['after'] ?? null;
-} while ($after);
+    // paging -> next URL
+    $nextPage = $response['paging']['next'] ?? null;
+} while ($nextPage);
 
-foreach ($files as $f) {
-    $fileName = $f['name'];
-    $base = pathinfo($fileName, PATHINFO_FILENAME);
-    if (isset($existing[$base])) {
-        progress('skipped',$fileName,100,'success',['video_id'=>$existing[$base]]);
+// 2. Process each Drive file
+foreach ($files as $file) {
+    $fullName = $file['name'];
+    $baseName = pathinfo($fullName, PATHINFO_FILENAME);
+
+    // Skip if title exists
+    if (isset($existing[$baseName])) {
+        progress('skipped', $fullName, 100, 'success', ['video_id' => $existing[$baseName]]);
         continue;
     }
+
     try {
-        $tmp = downloadDriveFile($f['id'], $fileName, $GOOGLE_API_KEY);
-        progress('download',$fileName,100);
-        [$vid, $err] = fbChunkedUpload($tmp, $fileName, $fbAccount, $fbToken, $FB_VER);
-        if ($err) throw new RuntimeException($err);
-        progress('upload',$fileName,100);
-        progress('done',$fileName,100,'success',['video_id'=>$vid]);
-        @unlink($tmp);
+        // a) Download from Drive
+        $tmpPath = downloadDriveFile($file['id'], $fullName, $googleKey);
+        progress('download', $fullName, 100);
+
+        // b) Chunked upload to FB with title = baseName
+        list($videoId, $error) = fbChunkedUpload($tmpPath, $fullName, $baseName, $fbAccount, $fbToken, $fbVersion);
+        if ($error) {
+            throw new RuntimeException($error);
+        }
+        progress('upload', $fullName, 100);
+        progress('done',   $fullName, 100, 'success', ['video_id' => $videoId]);
+        @unlink($tmpPath);
     } catch (Throwable $e) {
-        progress('done',$fileName,100,'error',['error'=>$e->getMessage()]);
+        progress('done', $fullName, 100, 'error', ['error' => $e->getMessage()]);
     }
 }
 
 touch("$jobDir/$jobId.done");
 
-// --- Helpers ---
-function fbChunkedUpload(string $filePath, string $fname, string $account, string $token, string $ver): array {
-    $size = filesize($filePath);
-    // start
-    $start = graphJson("https://graph-video.facebook.com/{$ver}/act_{$account}/advideos", [
-        'access_token' => $token,
-        'upload_phase' => 'start',
-        'file_size'    => $size
-    ]);
-    if (!empty($start['error'])) return [null, $start['error']['message'] ?? 'start_fail'];
-    $session = $start['upload_session_id'];
-    $startOffset = (int)$start['start_offset'];
-    $endOffset = (int)$start['end_offset'];
-    $videoId = $start['video_id'] ?? null;
-    $fh = fopen($filePath, 'rb');
-    // transfer
-    while ($startOffset < $endOffset) {
-        fseek($fh, $startOffset);
-        $chunk = fread($fh, $endOffset - $startOffset);
-        $transfer = graphJson("https://graph-video.facebook.com/{$ver}/act_{$account}/advideos", [
-            'access_token'      => $token,
-            'upload_phase'      => 'transfer',
-            'upload_session_id' => $session,
-            'start_offset'      => $startOffset,
-            'video_file_chunk'  => new CURLFile('data://video/mp4;base64,' . base64_encode($chunk), 'video/mp4', $fname)
-        ]);
-        if (!empty($transfer['error'])) { fclose($fh); return [null, $transfer['error']['message']]; }
-        $startOffset = (int)$transfer['start_offset'];
-        $endOffset = (int)$transfer['end_offset'];
-    }
-    fclose($fh);
-    // finish
-    $finish = graphJson("https://graph-video.facebook.com/{$ver}/act_{$account}/advideos", [
-        'access_token'      => $token,
-        'upload_phase'      => 'finish',
-        'upload_session_id' => $session,
-        'title'             => $base = pathinfo($fname, PATHINFO_FILENAME)
-    ]);
-    if (!empty($finish['error'])) return [null, $finish['error']['message'] ?? 'finish_fail'];
-    return [$finish['video_id'] ?? $videoId, null];
-}
-
-function graphJson(string $url, array $post = null): array {
+// --- Helper functions ---
+function graphJson(string $url, array $postFields = []): array {
     $ch = curl_init($url);
     curl_setopt_array($ch, [
         CURLOPT_RETURNTRANSFER => true,
-        CURLOPT_POSTFIELDS     => $post ?: []
+        CURLOPT_POSTFIELDS     => $postFields,
     ]);
     $raw = curl_exec($ch);
     curl_close($ch);
-    $json = json_decode($raw, true) ?: [];
-    return $json;
+    $json = json_decode($raw, true);
+    return is_array($json) ? $json : ['data'=>[], 'paging'=>[]];
 }
 
-function downloadDriveFile(string $id, string $name, string $apiKey): string {
-    $url = "https://www.googleapis.com/drive/v3/files/{$id}?alt=media&key={$apiKey}";
-    $dest = sys_get_temp_dir() . '/' . $name;
+function downloadDriveFile(string $fileId, string $fileName, string $apiKey): string {
+    $url = "https://www.googleapis.com/drive/v3/files/{$fileId}?alt=media&key={$apiKey}";
+    $dest = sys_get_temp_dir() . '/' . $fileName;
     $ch = curl_init($url);
     $fp = fopen($dest, 'w');
-    curl_setopt_array($ch, [CURLOPT_FILE => $fp, CURLOPT_FOLLOWLOCATION => true, CURLOPT_TIMEOUT => 0]);
+    curl_setopt_array($ch, [
+        CURLOPT_FILE           => $fp,
+        CURLOPT_FOLLOWLOCATION => true,
+        CURLOPT_TIMEOUT        => 0,
+    ]);
     curl_exec($ch);
-    if (curl_getinfo($ch, CURLINFO_HTTP_CODE) >= 400) throw new RuntimeException('Google Drive download failed');
+    $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
     curl_close($ch);
     fclose($fp);
+    if ($code >= 400) throw new RuntimeException('Google Drive download failed');
     return $dest;
+}
+
+function fbChunkedUpload(string $filePath, string $fileName, string $title, string $account, string $token, string $version): array {
+    $size = filesize($filePath);
+    // -- start phase
+    $start = graphJson("https://graph-video.facebook.com/{$version}/act_{$account}/advideos", [
+        'access_token' => $token,
+        'upload_phase' => 'start',
+        'file_size'    => $size,
+    ]);
+    if (!empty($start['error'])) {
+        return [null, $start['error']['message'] ?? 'start_error'];
+    }
+    $sessionId = $start['upload_session_id'];
+    $offset    = (int)$start['start_offset'];
+    $end       = (int)$start['end_offset'];
+    $videoId   = $start['video_id'] ?? null;
+    $fh = fopen($filePath, 'rb');
+
+    // -- transfer phase
+    while ($offset < $end) {
+        fseek($fh, $offset);
+        $chunk = fread($fh, $end - $offset);
+        $transfer = graphJson("https://graph-video.facebook.com/{$version}/act_{$account}/advideos", [
+            'access_token'      => $token,
+            'upload_phase'      => 'transfer',
+            'upload_session_id' => $sessionId,
+            'start_offset'      => $offset,
+            'video_file_chunk'  => new CURLFile('data://video/mp4;base64,' . base64_encode($chunk), 'video/mp4', $fileName),
+        ]);
+        if (!empty($transfer['error'])) {
+            fclose($fh);
+            return [null, $transfer['error']['message']];
+        }
+        $offset = (int)$transfer['start_offset'];
+        $end    = (int)$transfer['end_offset'];
+    }
+    fclose($fh);
+
+    // -- finish phase with title
+    $finish = graphJson("https://graph-video.facebook.com/{$version}/act_{$account}/advideos", [
+        'access_token'      => $token,
+        'upload_phase'      => 'finish',
+        'upload_session_id' => $sessionId,
+        'title'             => $title,
+    ]);
+    if (!empty($finish['error'])) {
+        return [null, $finish['error']['message'] ?? 'finish_error'];
+    }
+    return [$finish['video_id'] ?? $videoId, null];
 }
 
 function progress(string $phase, string $file, int $pct, string $status = 'running', array $extra = []): void {
     global $progressFile;
-    $entry = array_merge(['phase'=>$phase,'filename'=>$file,'pct'=>$pct,'status'=>$status], $extra);
+    $entry = array_merge([
+        'phase'    => $phase,
+        'filename' => $file,
+        'pct'      => $pct,
+        'status'   => $status,
+    ], $extra);
     file_put_contents($progressFile, json_encode($entry) . "\n", FILE_APPEND);
 }
